@@ -1,0 +1,2 @@
+ckpts/*.ckpt filter=lfs diff=lfs merge=lfs -text
+kde/* filter=lfs diff=lfs merge=lfs -text
