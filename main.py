@@ -1,27 +1,21 @@
-import datetime
-import os
 import sys
-import time
-import traceback
-
-import wandb
 
 sys.path.insert(1, "/home/kaechben/ProGamer")
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
-from fit import MDMA
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
-from pytorch_lightning.loggers import CometLogger, TensorBoardLogger, WandbLogger
+from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.tuner.tuning import Tuner
 from scipy import stats
 from torch.nn import functional as FF
 from tqdm import tqdm
+
+from fit import MDMA
 from helpers import *
 from jetnet_dataloader import JetNetDataloader
-
 
 
 def train(config):
@@ -58,31 +52,31 @@ def train(config):
 if __name__ == "__main__":
 
     config = {
-             "batch_size": 128,
-             "ckpt": False,
-             "dropout_gen": 0,
-             "dropout": 0.1,
-             "freq": 1,
-             "gan": "ls",
-             "heads_gen": 8,
-             "heads": 4,
-             "hidden_gen": 48,
-             "hidden": 64,
-             "l_dim_gen": 16,
-             "l_dim": 16,
-             "l_dim": 16,
-             "lr_d": 0.0001,
-             "lr_g": 0.0001,
-             "mean_field_loss": True,
-             "n_dim": 3,
-             "n_part": 150,
-             "n_start": 150,
-             "name": "MF2",
-             "new": False,
-             "num_layers_gen": 7,
-             "num_layers": 2,
-             "opt": "AdamW",
-             "parton": "q",
-             "stop_mean": True,
-        }
+        "batch_size": 128,
+        "ckpt": False,
+        "dropout_gen": 0,
+        "dropout": 0.1,
+        "freq": 1,
+        "gan": "ls",
+        "heads_gen": 8,
+        "heads": 4,
+        "hidden_gen": 48,
+        "hidden": 64,
+        "l_dim_gen": 16,
+        "l_dim": 16,
+        "l_dim": 16,
+        "lr_d": 0.0001,
+        "lr_g": 0.0001,
+        "mean_field_loss": True,
+        "n_dim": 3,
+        "n_part": 150,
+        "n_start": 150,
+        "name": "MF2",
+        "new": False,
+        "num_layers_gen": 7,
+        "num_layers": 2,
+        "opt": "AdamW",
+        "parton": "q",
+        "stop_mean": True,
+    }
     train(config)  # load_ckpt=ckptroot=root,

@@ -1,4 +1,4 @@
-import os
+
 import sys
 import time
 
@@ -42,14 +42,18 @@ for parton in [
 
         if name not in ["epic", "in"]:
             config = {"n_part": 150, "n_dim": 3, "batch_size": 1024, "parton": parton, "smart_batching": True, "n_start": 150}
-            data_module = JetNetDataloader(config,)
+            data_module = JetNetDataloader(
+                config,
+            )
             data_module.setup("train")
-            min_=data_module.scaler.transform(true[~mask[:len(true)]])[:,2].min()
-            max_=data_module.scaler.transform(true[~mask[:len(true)]])[:,2].max()
+            min_ = data_module.scaler.transform(true[~mask[: len(true)]])[:, 2].min()
+            max_ = data_module.scaler.transform(true[~mask[: len(true)]])[:, 2].max()
             model = MDMA.load_from_checkpoint(ckpt_dict[parton]).eval()
             model.to("cuda")
+
             def count_parameters(model):
                 return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
             n_gen = count_parameters(model.gen_net)
             n_dis = count_parameters(model.dis_net)
             z = torch.normal(torch.zeros(n * true.shape[0], true.shape[1], true.shape[2]), torch.ones(n * true.shape[0], true.shape[1], true.shape[2]))
@@ -67,14 +71,14 @@ for parton in [
             model.gen_net.cuda()
 
             start = time.time()
-            fake = torch.cat([model.gen_net(z[i * len(true) : (i + 1) * len(true)].cuda(), mask=mask[i *len(true) : (i + 1) * len(true)].bool().cuda()).cpu() for i in range(n)], dim=0)
+            fake = torch.cat([model.gen_net(z[i * len(true) : (i + 1) * len(true)].cuda(), mask=mask[i * len(true) : (i + 1) * len(true)].bool().cuda()).cpu() for i in range(n)], dim=0)
             print("time pro jet {}".format((time.time() - start) / len(fake)))
-            torch.clamp(fake[:,:,2],min_,max_,out=fake[:,:,2])
+            torch.clamp(fake[:, :, 2], min_, max_, out=fake[:, :, 2])
 
             model.data_module = data_module
             model.data_module.scaler = model.data_module.scaler.to(true.device)
             fake_scaled = model.data_module.scaler.inverse_transform(fake.clone())
-            fake_scaled[mask[:len(fake_scaled)]] = 0
+            fake_scaled[mask[: len(fake_scaled)]] = 0
 
         elif name == "epic":
             n_gen = -1

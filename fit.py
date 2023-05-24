@@ -6,15 +6,12 @@ import numpy as np
 import pytorch_lightning as pl
 import scipy
 import torch
-from jetnet.evaluation import fpd, fpnd, get_fpd_kpd_jet_features, w1efp, w1m, w1p
-
-# from metrics import *
-from models import Gen,Disc
+from jetnet.evaluation import fpd, get_fpd_kpd_jet_features
 from torch import nn
-from torch.autograd import Variable
-from torch.autograd import grad as torch_grad
 
-from helpers import CosineWarmupScheduler, center_jets_tensor, mass
+from helpers import CosineWarmupScheduler, mass
+# from metrics import *
+from models import Disc, Gen
 from plots import *
 
 

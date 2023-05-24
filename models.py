@@ -1,9 +1,11 @@
 import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.utils.weight_norm as weight_norm
-from helpers import  WeightNormalizedLinear
+
+from helpers import WeightNormalizedLinear
 
 
 class BlockGen(nn.Module):

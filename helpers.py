@@ -1,24 +1,13 @@
+import math
+from math import sqrt
+
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from torch import optim
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import _LRScheduler
-import math
-import torch
-import torch.nn as nn
-from math import sqrt
-from torch.nn  import Parameter
-import torch
-import torch.nn as nn
 from torch.nn import Parameter
-import math
-import torch.nn.functional as F
-import torch
-import torch.nn as nn
-import torch.nn.utils.weight_norm as weight_norm
-from torch.nn import Parameter
-import math
-import torch.nn.functional as F
+
 
 def mass(p):
     if not torch.is_tensor(p):
@@ -109,6 +98,7 @@ def to_canonical(data, rev=False):
 
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
+
 
 class WeightNormalizedLinear(nn.Module):
 

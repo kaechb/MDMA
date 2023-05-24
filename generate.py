@@ -1,14 +1,18 @@
-import torch
 import sys
-from jetnet_dataloader import JetNetDataloader
+
+import torch
+
 from fit import MDMA
+from jetnet_dataloader import JetNetDataloader
 
 parton = "q" if len(sys.argv) == 1 else sys.argv[2]
 n=10000 if len(sys.argv) == 1 else int(sys.argv[3])
 batchsize=3000 if len(sys.argv) == 1 else int(sys.argv[4])
 outdir = "out/" if len(sys.argv) == 1 else sys.argv[5]
 import pickle
+
 import numpy as np
+
 device="cuda" if torch.cuda.is_available() else "cpu"
 
 ckpt_dict = {"g": "ckpts/g.ckpt", "q": "ckpts/q.ckpt", "t": "ckpts/t.ckpt", "w": "ckpts/w.ckpt", "z": "ckpts/z.ckpt"}

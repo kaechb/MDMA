@@ -1,19 +1,17 @@
 import os
+from random import shuffle
 
+import jetnet
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import (DataLoader, Dataset, IterableDataset, Sampler,
+                              TensorDataset)
+
 from helpers import *
-import jetnet
-import pytorch_lightning as pl
-from torch.utils.data import DataLoader,TensorDataset,Dataset,Sampler
-import numpy as np
-from random import shuffle
-import numpy as np
-from torch.utils.data import IterableDataset
+
 
 def custom_collate(data): #(2)
         # x=torch.cat(torch.unsqueeze(data,0),)
