@@ -5,10 +5,10 @@ import torch
 from fit import MDMA
 from jetnet_dataloader import JetNetDataloader
 
-parton = "q" if len(sys.argv) == 1 else sys.argv[2]
-n=10000 if len(sys.argv) == 1 else int(sys.argv[3])
-batchsize=3000 if len(sys.argv) == 1 else int(sys.argv[4])
-outdir = "out/" if len(sys.argv) == 1 else sys.argv[5]
+parton = "q" if len(sys.argv) == 1 else sys.argv[1]
+n=10000 if len(sys.argv) == 1 else int(sys.argv[2])
+batchsize=3000 if len(sys.argv) == 1 else int(sys.argv[3])
+outdir = "out/" if len(sys.argv) == 1 else sys.argv[4]
 import pickle
 
 import numpy as np
