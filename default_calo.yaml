@@ -1,0 +1,37 @@
+
+  "augmentation":False
+  "batch_size": 128
+  "cartesian":True
+  "centering":False
+  "ckpt":None
+  "dropout": 0.0
+  "E_loss":False
+  "freq":1
+  "gan": "wgan"
+  "heads_gen": 16
+  "heads": 2
+  "hidden_gen": 48
+  "hidden": 32
+  "knn":False
+  "l_dim_gen": 16
+  "l_dim": 16
+  "lambda_gp":10
+  "lambda_pos":0.1
+  "lambda_response":0.1
+  "lambda":0.1
+  "lr_d": 0.0001
+  "lr_g": 0.0001
+  "lr":0.0001
+  "max_epochs": 2000
+  "max":True
+  "mean_field_loss":True
+  "name":"middle_new_linear"
+  "num_layers_gen": 5
+  "num_layers": 6
+  "opt": "Adam"
+  "pos_loss":False
+  "scaled":False
+  "stop_mean":True
+  "averaged":True
+  "weightdecay": 0.0
+  "N": 1
