@@ -1,11 +1,10 @@
-"averaged": true
 "batch_size": 128
-"ckpt": null
 "dropout": 0.0
+"dataset": "jetnet"
 "freq": 1
 "gan": "lsgan"
 "heads_gen": 16
-"heads": 16
+"heads": 4
 "hidden_gen": 48
 "hidden": 64
 "l_dim_gen": 16
@@ -19,7 +18,7 @@
 "num_layers_gen": 7
 "num_layers": 2
 "opt": "Adam"
-"stop_mean": false
+"stop_mean": true
 "swa_lr": 0.05
 "weightdecay": 0.0
 "parton": "t"
@@ -29,11 +28,11 @@
 "glu": false
 "gp_weight": 0.1
 "N": 1
-"fid": true
+"fid": false
 "cond_dim" : 1
 "stop_mean": true
-"weightnorm": true
-"spectralnorm": false
+"weightnorm": false
+"spectralnorm": true
 "cloudnorm": false
 "cloudnormgen": false
 "bins":
@@ -41,7 +40,8 @@
   - 100
   - 100
   - 100
-"start_swa": true
-"noise": false
+"start_swa": false
+"noise": true
 "pretrain": false
-"ckpt": "/gpfs/dust/maxwell/user/kaechben/calochallenge/jet/zjf03vmr/checkpoints/epoch=1726-w1m=0.00044-fpd=0.00029.ckpt"
+"ckpt": false
+"sampler": true

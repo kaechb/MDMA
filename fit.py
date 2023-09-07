@@ -38,8 +38,7 @@ class MDMA(pl.LightningModule):
         self.relu = torch.nn.ReLU()
         self.mse = nn.MSELoss()
         self.step = 0
-        self.averaged=self.hparams.averaged
-        self.name=self.hparams.name
+        self.name=self.hparams.dataset
         self._log_dict = {}
 
 
@@ -48,9 +47,12 @@ class MDMA(pl.LightningModule):
 
         self.gen_net.train()
         self.dis_net.train()
-        self.scaler.to(self.device)
-        hists=get_hists(self.hparams.bins,self.scaled_mins*0.99,self.scaled_maxs*1.01)
+        # self.scaler.to(self.device)
+        hists=get_hists(self.hparams.bins,self.scaled_mins.reshape(-1)*0.99,self.scaled_maxs.reshape(-1)*1.01,calo=self.name=="calo")
         self.hists_real,self.hists_fake=hists["hists_real"],hists["hists_fake"]
+        if self.name=="calo":
+            self.weighted_hists_real,self.weighted_hists_fake=hists["weighted_hists_real"], hists["weighted_hists_fake"]
+
         self.fake =[]
         self.batch = []
 
@@ -98,7 +100,7 @@ class MDMA(pl.LightningModule):
         if scale:
             fake=torch.cat(fakes)
             fake_scaled = self.scaler.inverse_transform(fake).float()
-            assert (fake_scaled.reshape(-1,3).max(0)[0].cpu().numpy()<=self.scaled_maxs[:3]).all()
+            assert (fake_scaled.reshape(-1,self.hparams.n_dim).max(0)[0]<=self.scaled_maxs[:self.hparams.n_dim]).all()
             if self.name=="calo":
                 fake_scaled[...,1:]=fake_scaled[...,1:].floor()
                 fake_scaled[:,:,2]=(fake_scaled[:,:,2]+torch.randint(0,self.num_alpha,(fake_scaled.shape[0],1),device=fake_scaled.device).expand(-1,batch.shape[1]))%self.num_alpha
@@ -128,7 +130,7 @@ class MDMA(pl.LightningModule):
         gradients = torch_grad(outputs=prob_interpolated, inputs=interpolated, grad_outputs=torch.ones_like(prob_interpolated), create_graph=True, retain_graph=True)[0]
         gradients = gradients.view(batch_size, -1)
         gradients_norm = torch.sqrt(torch.sum(gradients**2, dim=1) + 1e-12)
-        return self.hparams.gp_weight * ((gradients_norm - 1) ** 2).mean()
+        return ((gradients_norm - 1) ** 2).mean()
 
     def configure_optimizers(self):
         """Sets the optimizer and the learning rate scheduler"""
@@ -137,7 +139,7 @@ class MDMA(pl.LightningModule):
             opt_d = torch.optim.Adam(self.dis_net.parameters(), lr=self.hparams.lr, betas=(0.0, 0.999), eps=1e-14)  #
         elif self.hparams.opt == "AdamW":
             opt_g = torch.optim.Adam(self.gen_net.parameters(), lr=self.hparams.lr, betas=(0.0, 0.999), eps=1e-14)
-            opt_d = torch.optim.AdamW(self.dis_net.parameters(), lr=self.hparams.lr, betas=(0.0, 0.999), eps=1e-14, weight_decay=self.hparams.weightdecay)  #
+            opt_d = torch.optim.AdamW(self.dis_net.parameters(), lr=self.hparams.lr, betas=(0.0, 0.999), eps=1e-14,)
         else:
             raise
         sched_d, sched_g = self.schedulers(opt_d, opt_g)
@@ -160,8 +162,12 @@ class MDMA(pl.LightningModule):
         self._log_dict["Training/pred_real_mean"]=pred_real.mean()
         self._log_dict["Training/pred_fake_mean"]=pred_fake.mean()
         d_loss=self.loss(pred_real.reshape(-1),pred_fake.reshape(-1),critic=True)
+
         self.d_loss_mean = d_loss.detach() * 0.01 + 0.99 * self.d_loss_mean if not self.d_loss_mean is None else d_loss
         self._log_dict["Training/d_loss"] = self.d_loss_mean
+
+
+        d_loss=d_loss
         if self.hparams.gp:
             gp = self._gradient_penalty(batch, fake, mask=mask, cond=cond)
             d_loss += self.hparams.lambda_gp*gp
@@ -206,7 +212,7 @@ class MDMA(pl.LightningModule):
         if batch[0].shape[1]>0:
             batch, mask, cond = batch[0], batch[1].bool(), batch[2]
             if self.hparams.noise:
-                batch[:, :, :3] *= torch.ones_like(batch[:, :, :3]) + torch.normal(torch.zeros_like(batch[:, :, :3]), torch.ones_like(batch[:, :, :3]) * 1e-3)
+                batch[:, :, :self.hparams.n_dim] *= torch.ones_like(batch[:, :, :self.hparams.n_dim]) + torch.normal(torch.zeros_like(batch[:, :, :self.hparams.n_dim]), torch.ones_like(batch[:, :, :self.hparams.n_dim]) * 1e-3)
 
             if self.global_step > 500000 and self.hparams.stop_mean:
                 self.hparams.mean_field_loss = False
@@ -234,16 +240,17 @@ class MDMA(pl.LightningModule):
                 batch, mask, cond = batch[0], batch[1], batch[2]
 
 
-                if self.name=="calo":
-                    cond = torch.cat((cond.reshape(-1, 1,1), (~mask).float().sum(1).reshape(-1, 1,1)/self.avg_n), dim=-1).float()
+                if self.hparams.dataset=="calo":
+                    cond = cond.reshape(-1,1,2).float()
                 else:
                     cond=cond.reshape(-1,1,1).float()
                 self.w1ps = []
 
                 fake = self.sampleandscale(batch=batch, mask=mask, cond=cond, scale=True)
-                self.fake.append(fake.cpu())
-                self.batch.append(batch.cpu())
-                for i in range(3):
+                if self.name=="jet":
+                    self.fake.append(fake.cpu())
+                    self.batch.append(batch.cpu())
+                for i in range(self.hparams.n_dim):
                     self.hists_real[i].fill(batch[~mask][:,i].cpu().numpy())
                     self.hists_fake[i].fill(fake[:len(batch)][~mask][:,i].cpu().numpy())
                 self.hists_real[-1].fill(mass(batch).cpu().numpy())
@@ -253,7 +260,7 @@ class MDMA(pl.LightningModule):
 
 
     def on_validation_epoch_end(self):
-        if self.name=="calo":
+        if self.hparams.dataset=="calo":
             self.calo_evaluation()
         else:
             self.jetnet_evaluation()
@@ -265,8 +272,9 @@ class MDMA(pl.LightningModule):
 
         fake= torch.cat([torch.nn.functional.pad(batch, (0, 0, 0, 150 - batch.size(1))) for batch in self.fake],dim=0)
         print("sample lengths:",len(real),len(fake))
-        if not hasattr(self,"true_fpd"):
+        if not hasattr(self,"true_fpd") or not hasattr(self,"full"):
             self.true_fpd = get_fpd_kpd_jet_features(real, efp_jobs=1)
+            self.full = True
             self.min_fpd = 0.01
         """calculates some metrics and logs them"""
         # calculate w1m 10 times to stabilize for ckpting
@@ -314,14 +322,14 @@ class MDMA(pl.LightningModule):
             w1p = np.mean(np.abs(cdf_fake - cdf_real))
             w1ps.append(w1p)
             if i!=0:
-                self.log("features/"+self.names[i], w1p, on_step=False, on_epoch=True)
+                self.log("features/"+self.hparams.names[i], w1p, on_step=False, on_epoch=True)
                 weighted_cdf_fake = self.hists_fake[i].values().cumsum()
                 weighted_cdf_real = self.hists_real[i].values().cumsum()
                 weighted_cdf_fake /= weighted_cdf_fake[-1]
                 weighted_cdf_real /= weighted_cdf_real[-1]
                 weighted_w1p = np.mean(np.abs(weighted_cdf_fake - weighted_cdf_real))
                 weighted_w1ps.append(weighted_w1p)
-                self.log("features/"+self.names[i] + "_weighted", weighted_w1p, on_step=False, on_epoch=True)
+                self.log("features/"+self.hparams.names[i] + "_weighted", weighted_w1p, on_step=False, on_epoch=True)
             if i==1:
                 self.log("weighted_z", weighted_w1p, on_step=False, on_epoch=True)
                 if weighted_w1p<self.min_z:

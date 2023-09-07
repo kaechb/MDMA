@@ -33,6 +33,11 @@ from torch.optim.swa_utils import AveragedModel, SWALR
 # from comet_ml import Experiment
 from torch.nn.utils.weight_norm import WeightNorm
 import yaml
+import sys
+if len(sys.argv)>1:
+    NAME=sys.argv[1]
+else:
+    NAME="calo"
 def fixmepls1(model):
     for module in model.modules():
         for _, hook in module._forward_pre_hooks.items():
@@ -50,9 +55,9 @@ def lcm(a, b):
 def setup_model(config,data_module=None,model=False):
     if not model:
         model = MDMA(**config)
-    if config["name"]=="calo":
-        model.bins=[600,config.num_z,config.num_alpha,config.num_R]
-        model.num_z, model.num_alpha, model.num_R = config.num_z, config.num_alpha, config.num_R
+    if config["dataset"]=="calo":
+        model.bins=[600,config["num_z"],config["num_alpha"],config["num_R"]]
+        model.num_z, model.num_alpha, model.num_R = config["num_z"], config["num_alpha"], config["num_R"]
         model.E_loss=config["E_loss"]
         model.pos_loss=config["pos_loss"]
         model.lambda_gp=config["lambda_gp"]
@@ -69,7 +74,7 @@ def setup_model(config,data_module=None,model=False):
         model.pos_scale = torch.tensor(model.scaler.transfs[1].steps[2][1].scale_).cuda()
         model.pos_max_scale = torch.tensor(model.scaler.transfs[1].steps[0][1].scale_).cuda()
         model.pos_min = torch.tensor(model.scaler.transfs[1].steps[0][1].min_).cuda()
-        if model.name=="calo":
+        if config["dataset"]=="calo":
                     model.power_lambda=model.scaler.transfs[0].lambdas_[0]
                     model.mean=model.scaler.transfs[0]._scaler.mean_[0]
                     model.scale=model.scaler.transfs[0]._scaler.scale_[0]
@@ -81,12 +86,16 @@ def setup_model(config,data_module=None,model=False):
         model.min_pt=data_module.min_pt
         model.max_pt=data_module.max_pt
     model.i=0
-    model.loss = losses.hinge if config["gan"] == "hinge" else losses.wasserstein if config["gan"] == "wasserstein" else losses.least_squares
+    model.loss = losses.hinge if config["gan"] == "hinge" else losses.wasserstein if config["gan"] == "wgan" else losses.least_squares
     model.gp = config["gp"]
     model.d_loss_mean=None
     model.g_loss_mean=None
-    model.scaled_mins=data_module.mins
-    model.scaled_maxs=data_module.maxs
+    if config["dataset"]=="jet":
+        model.scaled_mins=torch.tensor(data_module.mins)
+        model.scaled_maxs=torch.tensor(data_module.maxs)
+    else:
+        model.scaled_mins=torch.zeros(4).cuda()
+        model.scaled_maxs=torch.tensor([1e9]+model.bins[1:]).cuda()
     model.swa=False
     return model
 
@@ -142,26 +151,35 @@ def train(config, logger,data_module,trainer,ckpt=False):
 
 if __name__ == "__main__":
 
-    config=yaml.load(open("default_jet.yaml"),Loader=yaml.FullLoader)
-    config["dataset"]="jetnet"
+
+    config=yaml.load(open("default_{}.yaml".format(NAME)),Loader=yaml.FullLoader)
+
     #set up WandB logger
     logger = WandbLogger(
         save_dir="/gpfs/dust/maxwell/user/{}/calochallenge".format(os.environ["USER"]),
         sync_tensorboard=False,
-        project="MDMA_"+"calo" if config["name"]=="calochallenge" else "jet")
+        project="MDMA_"+NAME)
     # update config with hyperparameters from sweep
     logger.experiment.log_code(".")
-    ckpt=config["ckpt"]
     if len(logger.experiment.config.keys()) > 0:
         ckpt=None
         config.update(**logger.experiment.config)
+    else:
+        config=yaml.load(open("default_{}.yaml".format("calo")),Loader=yaml.FullLoader)
     if config["dataset"]=="calo":
+
         from dataloader_calo import PointCloudDataloader
     else:
         from dataloader_jetnet import PointCloudDataloader
+    ckpt=config["ckpt"]
     data_module = PointCloudDataloader(**config)
     data_module.setup("train")
-    callbacks =[LearningRateMonitor(),ModelCheckpoint(monitor="w1m", save_top_k=2, mode="min",filename="{epoch}-{w1m:.5f}-{fpd:.5f}",every_n_epochs=1,),pl.callbacks.LearningRateMonitor(logging_interval="step")]
+    if config["dataset"]=="jet":
+
+        callbacks =[ModelCheckpoint(monitor="w1m", save_top_k=2, mode="min",filename="{epoch}-{w1m:.5f}-{fpd:.5f}",every_n_epochs=1,),pl.callbacks.LearningRateMonitor(logging_interval="step"),ModelCheckpoint(monitor="fpd", save_top_k=2, mode="min",filename="{epoch}-{w1m:.5f}-{fpd:.5f}",every_n_epochs=1,),pl.callbacks.LearningRateMonitor(logging_interval="step")]
+    else:
+        callbacks =[ModelCheckpoint(monitor="w1p", save_top_k=2, mode="min",filename="{epoch}-{w1p:.5f}-{weighted_w1p:.5f}",every_n_epochs=1,)]
+
         # ModelCheckpoint(monitor="weighted_z", save_top_k=1, mode="min",filename="{epoch}-w1p_{w1p:.5f}-weighted_w1p_{weighted_w1p:.5f}-weighted_z_{weighted_z:.5f}",every_n_epochs=1,),
         # ModelCheckpoint(monitor="weighted_w1p", save_top_k=1, mode="min",filename="min_weighted_{epoch}-{w1p:.5f}-{weighted_w1p:.5f}",every_n_epochs=1,),pl.callbacks.LearningRateMonitor(logging_interval="step")
         # ,ModelCheckpoint(monitor= 'features_E', mode= 'min',save_top_k=1,filename="minE_{features_E:.7f}-{w1p:.5f}", every_n_train_steps= 0, every_n_epochs= 1, train_time_interval= None)]

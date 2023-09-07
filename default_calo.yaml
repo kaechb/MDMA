@@ -1,37 +1,63 @@
-
-  "augmentation":False
-  "batch_size": 128
-  "cartesian":True
-  "centering":False
-  "ckpt":None
-  "dropout": 0.0
-  "E_loss":False
-  "freq":1
-  "gan": "wgan"
-  "heads_gen": 16
-  "heads": 2
-  "hidden_gen": 48
-  "hidden": 32
-  "knn":False
-  "l_dim_gen": 16
-  "l_dim": 16
-  "lambda_gp":10
-  "lambda_pos":0.1
-  "lambda_response":0.1
-  "lambda":0.1
-  "lr_d": 0.0001
-  "lr_g": 0.0001
-  "lr":0.0001
-  "max_epochs": 2000
-  "max":True
-  "mean_field_loss":True
-  "name":"middle_new_linear"
-  "num_layers_gen": 5
-  "num_layers": 6
-  "opt": "Adam"
-  "pos_loss":False
-  "scaled":False
-  "stop_mean":True
-  "averaged":True
-  "weightdecay": 0.0
-  "N": 1
+"augmentation": false
+"batch_size": 128
+"bins":
+  - 100
+  - 45
+  - 16
+  - 9
+"cartesian": false
+"centering": false
+"ckpt": None
+"cloudnorm": false
+"cloudnormgen": false
+"cond_dim" : 2
+"dataset": "calo"
+"dropout": 0.0
+"E_loss": false
+"fid": false
+"freq": 5
+"gan": "wgan"
+"heads_gen": 16
+"heads": 16
+"hidden_gen": 48
+"hidden": 32
+"knn": false
+"l_dim_gen": 16
+"l_dim": 16
+"lambda_gp": 100
+"lambda_pos": 0.1
+"lambda_response": 0.1
+"lambda": 0.1
+"lr_d": 0.0001
+"lr_g": 0.0001
+"lr": 0.0001
+"max_epochs": 2000
+"max": true
+"mean_field_loss": true
+"name": "middle_new_linear"
+"names":
+  - "E"
+  - "z"
+  - "alpha"
+  - "R"
+"num_layers_gen": 5
+"num_layers": 6
+"num_z": 45
+"num_alpha": 16
+"num_R": 9
+"n_dim": 4
+"opt": "AdamW"
+"pos_loss": false
+"scaled": false
+"stop_mean": true
+"weightdecay": 0.0
+"weightnorm": false
+"spectralnorm": true
+"N": 1
+"gp": true
+"glu": true
+"start_swa": false
+"noise": false
+"pretrain": false
+"ckpt": false
+"sampler": true

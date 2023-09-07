@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import weight_norm,spectral_norm
 
-from helpers import WeightNormalizedLinear
+from helpers import WeightNormalizedLinear, MultiheadL2Attention
 
 class CloudNorm(nn.Module):
     def __init__(self, eps=1e-5):
@@ -41,7 +41,7 @@ class CloudNorm(nn.Module):
         return normalized_point_cloud
 
 class Block(nn.Module):
-    def __init__(self, embed_dim, num_heads, hidden,dropout,weightnorm=True,cond_dim=1,glu=False,cloudnorm=False):
+    def __init__(self, embed_dim, num_heads, hidden,dropout,weightnorm=False,cond_dim=1,glu=False,cloudnorm=False,critic=True):
         super().__init__()
         self.fc0 = WeightNormalizedLinear(embed_dim, hidden) if weightnorm else nn.Linear(embed_dim, hidden)
         self.fc0_cls = (WeightNormalizedLinear(embed_dim, hidden)) if weightnorm else nn.Linear(embed_dim, hidden)
@@ -50,8 +50,8 @@ class Block(nn.Module):
         self.cloudnorm=CloudNorm() if cloudnorm else None
         self.fc1_cls = (WeightNormalizedLinear(hidden+1, hidden)) if weightnorm else nn.Linear(hidden+1, hidden)
         self.fc2_cls = (WeightNormalizedLinear(hidden, embed_dim)) if weightnorm else nn.Linear(hidden, embed_dim)
-        self.cond_cls = nn.Linear(cond_dim, embed_dim)
-        self.attn = weight_norm(nn.MultiheadAttention(hidden, num_heads, batch_first=True, dropout=dropout),"in_proj_weight") if weightnorm else nn.MultiheadAttention(hidden, num_heads, batch_first=True, dropout=dropout)
+        self.cond_cls = nn.Linear(cond_dim, hidden)
+        self.attn = MultiheadL2Attention(hidden,num_heads) if critic else nn.MultiheadAttention(hidden,num_heads,batch_first=True,)
         self.act = nn.LeakyReLU()
         self.ln = nn.LayerNorm(hidden)
 
@@ -80,10 +80,10 @@ class Block(nn.Module):
 
 
 class Gen(nn.Module):
-    def __init__(self, n_dim, l_dim_gen, hidden_gen, num_layers_gen, heads_gen, cond_dim,cloudnormgen, **kwargs):
+    def __init__(self, n_dim, l_dim_gen, hidden_gen, num_layers_gen, heads_gen, cond_dim,cloudnormgen,glu, **kwargs):
         super().__init__()
         self.embbed = nn.Linear(n_dim, l_dim_gen)
-        self.encoder = nn.ModuleList([Block(embed_dim=l_dim_gen, num_heads=heads_gen,hidden=hidden_gen,weightnorm=False,dropout=0,cloudnorm=cloudnormgen) for i in range(num_layers_gen)])
+        self.encoder = nn.ModuleList([Block(embed_dim=l_dim_gen, num_heads=heads_gen,hidden=hidden_gen,weightnorm=False,dropout=0,cloudnorm=cloudnormgen,glu=glu,critic=False) for i in range(num_layers_gen)])
         self.out = nn.Linear(l_dim_gen, n_dim)
         self.act = nn.LeakyReLU()
         if cond_dim>1:
@@ -93,23 +93,26 @@ class Gen(nn.Module):
 
     def forward(self, x,mask,cond,weight=False):
         x = self.act(self.embbed(x))
+
+        if self.cond:
+            x=F.glu(torch.cat((x,self.cond(cond[:,:,:1]).expand(-1,x.shape[1],-1).clone()),dim=-1))
         x_cls = x.sum(1).unsqueeze(1).clone()/self.avg_n
         for layer in self.encoder:
             x, x_cls, w = layer(x,x_cls=x_cls,mask=mask,cond=cond)
 
-        if self.cond:
-            x=F.glu(torch.cat((x,self.cond(cond[:,:,:1]).expand(-1,x.shape[1],-1)),dim=-1))
+        # if self.cond:
+        #     x=F.glu(torch.cat((x,self.cond(cond[:,:,:1]).expand(-1,x.shape[1],-1)),dim=-1))
         x= self.out(self.act(x))
         return x
 
 class Disc(nn.Module):
-    def __init__(self, n_dim, l_dim, hidden, num_layers, heads,dropout,cond_dim,weightnorm,cloudnorm, **kwargs):
+    def __init__(self, n_dim, l_dim, hidden, num_layers, heads,dropout,cond_dim,weightnorm,cloudnorm,glu, **kwargs):
         super().__init__()
         self.embbed = WeightNormalizedLinear(n_dim, l_dim) if weightnorm else spectral_norm(nn.Linear(n_dim, l_dim))
-        self.encoder = nn.ModuleList([Block(embed_dim=l_dim, num_heads=heads, hidden=hidden,dropout=dropout,weightnorm=weightnorm,cloudnorm=cloudnorm) for i in range(num_layers)])
-        self.out = WeightNormalizedLinear(l_dim, 1) if weightnorm else spectral_norm(nn.Linear(l_dim, 1))
+        self.encoder = nn.ModuleList([Block(embed_dim=l_dim, num_heads=heads, hidden=hidden,dropout=dropout,weightnorm=weightnorm,cloudnorm=cloudnorm,glu=glu,critic=True) for i in range(num_layers)])
+        self.out = WeightNormalizedLinear(l_dim, 1) if weightnorm else spectral_norm(nn.Linear(l_dim,1))
         self.cond = True if cond_dim>1 else False
-        self.embbed_cls = WeightNormalizedLinear(l_dim+int(self.cond), l_dim) if weightnorm else spectral_norm(nn.Linear(l_dim+int(self.cond), l_dim))
+        self.embbed_cls = WeightNormalizedLinear(l_dim+cond_dim, l_dim) if weightnorm else spectral_norm(nn.Linear(l_dim+cond_dim, l_dim))
         self.act = nn.LeakyReLU()
         self.fc1 = WeightNormalizedLinear(l_dim+cond_dim, hidden) if weightnorm else nn.Linear(l_dim+cond_dim, hidden)
         self.fc2 = WeightNormalizedLinear(hidden, l_dim) if weightnorm else nn.Linear(hidden, l_dim)
@@ -139,12 +142,13 @@ if __name__ == "__main__":
 
     z = torch.randn(10, 40, 3,device="cuda")
     mask = torch.zeros((10, 40),device="cuda").bool()
-    cond=(~mask.bool()).float().sum(1).unsqueeze(-1).unsqueeze(-1)/40#torch.cat((,torch.randn(256,1,device="cuda")),dim=-1)
-    model =Gen(n_dim=3, l_dim_gen=16, hidden_gen=32, num_layers_gen=8, heads_gen=8, dropout=0.0,cond_dim=1,cloudnormgen=True).cuda()
+    cond=torch.cat(((~mask.bool()).float().sum(1).unsqueeze(-1).unsqueeze(-1)/40,torch.randn(10,1,1,device="cuda")),dim=-1)
+    model =Gen(n_dim=3, l_dim_gen=16, hidden_gen=32, num_layers_gen=8, heads_gen=8, dropout=0.0,cond_dim=2,cloudnormgen=True,glu=False).cuda()
     model.avg_n=40
     x=model(z.cuda(),mask.cuda(),cond.cuda())
     print(x.std())
-    model = Disc(3, 16, 64, 3, 8,0.1,1,spectralnorm=True,weightnorm=False).cuda()
+    model = Disc(n_dim=3, l_dim=16, hidden=64, num_layers=3, heads=4,dropout=0,cond_dim=2,weightnorm=False,cloudnorm=False,glu=False).cuda()
     model.avg_n=40
     s,s_cls=model(z.cuda(),mask.cuda(),cond=cond)
     print(s.std(),s_cls.std())
+    assert (s==s).all()

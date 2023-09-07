@@ -12,7 +12,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import PowerTransformer, StandardScaler, MinMaxScaler
 from torch.utils.data import Dataset
 #from preprocess import ScalerBase,DQ,LogitTransformer
-from preprocess_new import ScalerBaseNew,DQLinear,LogitTransformer, SqrtTransformer
+from preprocess_new import ScalerBaseNew,DQLinear,LogitTransformer, SqrtTransformer, DQ
 class CustomDataset(Dataset):
     def __init__(self, data, E):
         assert len(data) == len(E), "The lengths of data and E are not equal"
@@ -53,14 +53,15 @@ class BucketBatchSampler(BatchSampler):
 
 
 
-def pad_collate_fn(batch):
+def pad_collate_fn(batch,avg_n):
 
     batch,E=zip(*batch)
     max_len = max(len(sample) for sample in batch)
     padded_batch =pad_sequence(batch, batch_first=True, padding_value=0.0)[:,:,:4].float()
     mask = ~(torch.arange(max_len).expand(len(batch), max_len) < torch.tensor([len(sample) for sample in batch]).unsqueeze(1))
     E=(torch.stack(E).log()-10).float()
-    return padded_batch,mask,E
+    cond=torch.cat((E.unsqueeze(-1),mask.sum(1).unsqueeze(-1).unsqueeze(-1)/avg_n),dim=-1)
+    return padded_batch,mask,cond
 
 def pad_collate_aug_fn(batch, scaler=None):
 
@@ -146,24 +147,21 @@ class PointCloudDataloader(pl.LightningDataModule):
         self.val_data=torch.load(f"/beegfs/desy/user/kaechben/calochallenge/pc_test_{self.name}.pt")
         self.val_E=self.val_data["energies"]
         self.val_data=self.val_data["data"]
-        if not self.new:
-            self.scaler= ScalerBase(
-                transfs=[
-                    PowerTransformer(method="box-cox", standardize=True),
-                    Pipeline([('dequantization', DQ()),('minmax_scaler', MinMaxScaler(feature_range=(1e-5, 1-1e-5))),('logit_transformer', LogitTransformer()),("standard_scaler",StandardScaler())]),
-                    Pipeline([('dequantization', DQ()),('minmax_scaler', MinMaxScaler(feature_range=(1e-5, 1-1e-5))),('logit_transformer', LogitTransformer()),("standard_scaler",StandardScaler())]),
-                    Pipeline([('dequantization', DQ()),('minmax_scaler', MinMaxScaler(feature_range=(1e-5, 1-1e-5))),('logit_transformer', LogitTransformer()),("standard_scaler",StandardScaler())])]
-                    ,
-                featurenames=["E", "z", "alpha", "r"],
-                name=self.name
-            )
-        else:
-            self.scaler = ScalerBaseNew(
+
+        self.scaler = ScalerBaseNew(
                         transfs=[],
                         featurenames=["E", "z", "alpha", "r"],
                         name=self.name,
                         overwrite=False)
-            del self.scaler.transfs[1].steps[0]
+        del self.scaler.transfs[1].steps[0]
+        self.mins=torch.ones(4).unsqueeze(0)
+        self.maxs=torch.ones(4).unsqueeze(0)
+        n=[]
+        for d in self.data:
+            self.mins=torch.cat((self.mins,d.reshape(-1,4).min(0,keepdim=True)[0])).min(0,keepdim=True)[0]
+            self.maxs=torch.cat((self.maxs,d.reshape(-1,4).max(0,keepdim=True)[0])).max(0,keepdim=True)[0]
+            n.append(len(d))
+        self.avg_n=sum(n)/len(n)
         if self.max:
             self.train_iterator = BucketBatchSamplerMax(
                                 self.data,
@@ -195,8 +193,8 @@ class PointCloudDataloader(pl.LightningDataModule):
         if self.aug:
             self.train_dl = DataLoader(CustomDataset(self.data,self.E), batch_sampler=self.train_iterator, collate_fn=lambda x: pad_collate_aug_fn(x,self.scaler)  ,num_workers=16)
         else:
-            self.train_dl = DataLoader(CustomDataset(self.data,self.E), batch_sampler=self.train_iterator,collate_fn=pad_collate_fn,num_workers=16)
-        self.val_dl = DataLoader(CustomDataset(self.val_data,self.val_E), batch_sampler=self.val_iterator,collate_fn=pad_collate_fn,num_workers=16)
+            self.train_dl = DataLoader(CustomDataset(self.data,self.E), batch_sampler=self.train_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=16)
+        self.val_dl = DataLoader(CustomDataset(self.val_data,self.val_E), batch_sampler=self.val_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=16)
 
 
     def train_dataloader(self):
@@ -209,14 +207,10 @@ if __name__=="__main__":
 
     loader=PointCloudDataloader("big_new_linear",64,max=False,augmentation=False)
     loader.setup("train")
-
-    # for i in loader.val_dataloader():
-    #     if i[0].shape[1]>0:
-    #         print(i[0][:,:,0].min())
-
-    #         assert (i[0]==i[0]).all()
+    print(loader.avg_n)
+    raise
     mins=torch.ones(4).unsqueeze(0)
     for i in loader.train_dataloader():
             mins=torch.min(torch.cat((mins,i[0][~i[1]].min(0,keepdim=True)[0]),dim=0),dim=0)[0].unsqueeze(0)
-            print(mins)
+
             assert (i[0]==i[0]).all()

@@ -160,6 +160,19 @@ class LinearInterpolatedDistribution(rv_continuous):
     def rvs(self, size=None):
         u = np.random.uniform(size=size)
         return self._ppf(u)
+class DQ(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        pass
+    def fit(self, X, y=None):
+        return self
+    def fit_transform(self, X, y=None):
+        return self.transform(X)
+    def transform(self, X, y=None):
+        X=X+np.random.rand(*X.shape)
+        return X
+    def inverse_transform(self, X, y=None):
+        X=np.floor(X)
+        return X
 class ScalerBaseNew:
     def __init__(self, transfs,name, featurenames,overwrite=False,data_dir="/beegfs/desy/user/kaechben/calochallenge/"):
         self.transfs = transfs

@@ -16,7 +16,7 @@ from helpers import *
 
 def custom_collate(data,avg_n): #(2)
         # x=torch.cat(torch.unsqueeze(data,0),)
-        data=torch.stack(data)
+        data=torch.stack(data).squeeze(0)
         mask=data[:,:,-1].bool()
         n=(~mask).sum(1).float()
 
@@ -94,7 +94,7 @@ class PointCloudDataloader(pl.LightningDataModule):
     one thing to note is the custom standard scaler that works on tensors
    """
 
-    def __init__(self,parton,n_dim,n_part,batch_size,pretrain=False, **kwargs):
+    def __init__(self,parton,n_dim,n_part,batch_size,pretrain,sampler, **kwargs):
         super().__init__()
 
         self.parton = parton
@@ -102,6 +102,7 @@ class PointCloudDataloader(pl.LightningDataModule):
         self.n_part = n_part
         self.batch_size = batch_size
         self.pretrain=pretrain
+        self.sampler=sampler
 
 
 
@@ -151,7 +152,7 @@ class PointCloudDataloader(pl.LightningDataModule):
 
 
     def train_dataloader(self):
-        return DataLoader(self.data[:,:150],num_workers=16,shuffle=True,drop_last=True,collate_fn=lambda x:custom_collate(x,self.n_mean),batch_size=self.batch_size)
+        return DataLoader(self.data[:,:150],num_workers=16,shuffle=True,drop_last=True,collate_fn=lambda x:custom_collate(x,self.n_mean),batch_size=self.batch_size, batch_sampler=self.train_iterator ) if not self.sampler else DataLoader(self.data[:,:150],num_workers=16,collate_fn=lambda x:custom_collate(x,self.n_mean), sampler=self.train_iterator )
 
     def val_dataloader(self):
         return DataLoader(self.test_set[:,:150], batch_size=self.batch_size*100, drop_last=False,num_workers=16,collate_fn=lambda x:custom_collate(x,self.n_mean))
@@ -169,9 +170,10 @@ if __name__=="__main__":
         "batch_size": 1024,
         "parton": "t",
         "smart_batching":True,
-        "pretrain":True
+        "pretrain":True,
+        "sampler":True
      }
-    x=PointCloudDataloader("t",3,150,128,True)
+    x=PointCloudDataloader(parton="t",n_dim=3,n_part=150,batch_size=128,pretrain=False,sampler=True)
     x.setup("train")
     for i in x.train_dataloader():
         print((~i[1].bool()).sum(1))

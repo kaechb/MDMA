@@ -58,7 +58,7 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import PowerTransformer, StandardScaler, MinMaxScaler
 from tqdm import tqdm
 import matplotlib.ticker as ticker
-
+from torch.nn.utils import weight_norm,spectral_norm
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import MinMaxScaler
@@ -278,17 +278,15 @@ class plotting_point_cloud():
             ax[1,k].set_ylabel("Ratio")
             ax[0,k].patches[0].set_lw(2)
             ax[0,k].get_legend().remove()
-            ax[1,k].xaxis.set_major_locator(ticker.MaxNLocator(4))
+            # ax[1,k].xaxis.set_major_locator(ticker.MaxNLocator(10))
             k+=1
         if not weighted:
             ax[0,0].set_yscale("log")
         ax[0,leg].legend(loc="best",fontsize=18)
         handles, labels = ax[0,leg].get_legend_handles_labels()
-        # ax[0,-1].locator_params(nbins=4,axis="x")
-        # ax[1,-1].locator_params(nbins=4,axis="x")
         handles[1]=mpatches.Patch(color=sns.color_palette()[1], label='The red data')
         ax[0,leg].legend(handles, labels)
-        plt.tight_layout()
+        plt.tight_layout(pad=0.2)
         self.summary.log_image("{}ratio".format("weighted " if weighted else "unweighted "), [fig],self.step)
         plt.close()
 
@@ -316,26 +314,12 @@ class plotting_point_cloud():
             )
             i += 1
             ax[0, k].set_xlabel("")
-
-
-            # ax[0,k].patches[1].set_fc("orange")
-            # ax[0,k].patches[1].set_alpha(0.5)
-            #                 if quantile and v=="m" and plot_vline:
-            #                     ax[0,k].hist(m[m_t<np.quantile(m_t,0.1)],histtype='step',bins=bins,alpha=1,color="red",label="10% quantile gen",hatch="/")
-            #                     ax[0,k].vlines(np.quantile(m_t,0.1),0,np.max(h[:]),color="red",label='10% quantile train')
-
-            # ax[0,k].hist(temp,bins=bins,color="orange",alpha=0.5)
             ax[0, k].patches[1].set_fill(True)
             ax[0, k].ticklabel_format(axis="y", style="scientific", scilimits=(-3, 3), useMathText=True)
-
             ax[0, k].patches[1].set_fc(sns.color_palette()[1])
             ax[0, k].patches[1].set_edgecolor("black")
-
             ax[0, k].patches[1].set_alpha(self.alpha)
-
-
             ax[1, k].set_xlabel(name)
-
             ax[0, k].set_ylabel("Counts")
             ax[1, k].set_ylabel("Ratio")
             ax[0, k].patches[0].set_lw(2)
@@ -414,18 +398,66 @@ def get_hists(bins,mins,maxs,calo=False):
         hists["weighted_hists_fake"] = []
         hists["response_real"]=hist.Hist(hist.axis.Regular(100, 0.6, 1.1))
         hists["response_fake"]=hist.Hist(hist.axis.Regular(100, 0.6, 1.1))
+
         hists["hists_real"].append(hist.Hist(hist.axis.Regular(100, 0, 6000)))
         hists["hists_fake"].append(hist.Hist(hist.axis.Regular(100, 0, 6000)))
-        hists["weighted_hists_real"].append(hist.Hist(hist.axis.Integer(0, n)))
-        hists["weighted_hists_fake"].append(hist.Hist(hist.axis.Integer(0, n)))
 
-
-        for n in bins:
+        for n in bins[1:]:
             hists["hists_real"].append(hist.Hist(hist.axis.Integer(0, n)))
             hists["hists_fake"].append(hist.Hist(hist.axis.Integer(0, n)))
+        for n in bins[1:]:
+            hists["weighted_hists_real"].append(hist.Hist(hist.axis.Integer(0, n)))
+            hists["weighted_hists_fake"].append(hist.Hist(hist.axis.Integer(0, n)))
     else:
             for n,mi,ma in zip(bins,mins,maxs):
                 hists["hists_real"].append(hist.Hist(hist.axis.Regular(n,mi, ma)))
                 hists["hists_fake"].append(hist.Hist(hist.axis.Regular(n,mi, ma)))
     return hists
 
+
+class MultiheadL2Attention(nn.Module):
+    def __init__(self, embed_size, num_heads):
+        super(MultiheadL2Attention, self).__init__()
+        self.num_heads = num_heads
+        self.head_dim = embed_size // num_heads
+
+        # Ensure that the embedding size is a multiple of the number of heads
+        assert (
+            self.head_dim * num_heads == embed_size
+        ), "Embedding size should be divisible by number of heads"
+
+        # Input linear layers
+        self.q_linear = spectral_norm(nn.Linear(embed_size, embed_size, bias=False))
+        self.k_linear = spectral_norm(nn.Linear(embed_size, embed_size, bias=False))
+        self.v_linear = spectral_norm(nn.Linear(embed_size, embed_size, bias=False))
+
+        # Output linear layer
+        self.out = spectral_norm(nn.Linear(embed_size, embed_size, bias=False))
+
+    def forward(self, Q, K, V, key_padding_mask=None, need_weights=False):
+        batch_size = Q.shape[0]
+
+        Q = self.q_linear(Q)
+        K = self.k_linear(K)
+        V = self.v_linear(V)
+
+        Q = Q.reshape(batch_size, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        K = K.reshape(batch_size, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        V = V.reshape(batch_size, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+
+        l2_distances = torch.norm(Q.unsqueeze(3) - K.unsqueeze(2), dim=-1)
+        l2_distances = -l2_distances
+
+        if key_padding_mask is not None:
+            l2_distances = l2_distances.masked_fill(key_padding_mask == 1, float("-inf"))
+
+        attention_scores = F.softmax(l2_distances, dim=-1)
+        attention_output = torch.matmul(attention_scores, V)
+
+        # Sum across the seq_length_K dimension to get the final representation of Q
+        attention_output = attention_output.sum(dim=2)  # Sum across the K sequence dimension
+
+        # Reshape for the final output linear layer
+        attention_output = attention_output.reshape(batch_size, -1, self.num_heads * self.head_dim)
+
+        return self.out(attention_output), None
