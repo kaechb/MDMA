@@ -25,10 +25,11 @@
 "lambda_response": 0.1
 "lambda": 0.1
 "lr": 0.0001
+"L2": true
 "max_epochs": 2000
 "max": true
 "mean_field_loss": true
-"name": "middle_new_linear"
+"name": "calo"
 "names":
   - "E"
   - "z"

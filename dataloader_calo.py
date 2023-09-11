@@ -140,10 +140,10 @@ class PointCloudDataloader(pl.LightningDataModule):
     def setup(self, stage ):
         # This just sets up the dataloader, nothing particularly important. it reads in a csv, calculates mass and reads out the number particles per jet
         # And adds it to the dataset as variable. The only important thing is that we add noise to zero padded jets
-        self.data=torch.load(f"/beegfs/desy/user/kaechben/calochallenge/pc_train_{self.name}.pt")
+        self.data=torch.load(f"./calo.pt")
         self.E=self.data["energies"]
         self.data=self.data["data"]
-        self.val_data=torch.load(f"/beegfs/desy/user/kaechben/calochallenge/pc_test_{self.name}.pt")
+        self.val_data=torch.load(f"./calo_test.pt")
         self.val_E=self.val_data["energies"]
         self.val_data=self.val_data["data"]
 
@@ -151,6 +151,7 @@ class PointCloudDataloader(pl.LightningDataModule):
                         transfs=[],
                         featurenames=["E", "z", "alpha", "r"],
                         name=self.name,
+                        data_dir="./",
                         overwrite=False)
         del self.scaler.transfs[1].steps[0]
         self.mins=torch.ones(4).unsqueeze(0)

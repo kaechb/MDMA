@@ -180,6 +180,7 @@ class ScalerBaseNew:
         self.n_features=len(featurenames)
         self.data_dir=data_dir
         self.scalerpath = Path(data_dir) / "scaler_{}.gz".format(name)
+        print(self.scalerpath)
         self.name=name
         if self.scalerpath.is_file() and not overwrite:
              self.transfs = joblib.load(self.scalerpath)

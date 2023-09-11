@@ -245,16 +245,7 @@ if NAME=="calo":
 else:
     from dataloader_jetnet import PointCloudDataloader
     name="jet"
-    run="zjf03vmr"
-    run="jx18edcf"
-
-    ckpt=f"/gpfs/dust/maxwell/user/kaechben/calochallenge/MDMA_{name}/{run}/checkpoints/"
-    end="epoch=914-w1m=0.00045-fpd=0.00024.ckpt"
-    end="epoch=2178-w1m=0.00036-fpd=0.00029-v1.ckpt"
-    ckpt=ckpt+end
-    api=wandb.Api()
-    run=api.run(f"kaechben/MDMA_{NAME}/{run}")
-    config=run.config
+    ckpt="./jet.ckpt"
     config=yaml.load(open("default_{}.yaml".format(NAME)),Loader=yaml.FullLoader)
 
 torch.set_float32_matmul_precision('medium' )
