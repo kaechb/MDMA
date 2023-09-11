@@ -242,7 +242,7 @@ class plotting_point_cloud():
         else:
             self.summary = None
 
-    def plot_ratio(self,h_real,h_fake,weighted,leg=-1):
+    def plot_calo(self,h_real,h_fake,weighted,leg=-1):
         #This creates a histogram of the inclusive distributions and calculates the mass of each jet
         #and creates a histogram of that
         #if save, the histograms are logged to tensorboard otherwise they are shown
@@ -251,7 +251,7 @@ class plotting_point_cloud():
         i=0
         k=0
         fig,ax=plt.subplots(2,4 if not weighted else 3,gridspec_kw={'height_ratios': [4, 1]},figsize=self.fig_size4,sharex="col")
-        plt.suptitle("All Hits",fontsize=18)
+
         cols=["E","z","alpha","R"]
         names=[r"$E$",r"$z$",r"$\alpha$",r"$R$"]
         if weighted:
@@ -278,7 +278,12 @@ class plotting_point_cloud():
             ax[1,k].set_ylabel("Ratio")
             ax[0,k].patches[0].set_lw(2)
             ax[0,k].get_legend().remove()
-            # ax[1,k].xaxis.set_major_locator(ticker.MaxNLocator(10))
+            xticks=[int(h_real[k].axes[0].edges[-1]//4*i) for i in range(0,int(5))]
+
+            ax[1,k].set_xticks(np.array(xticks),np.array(xticks))
+            ax[0,k].set_xticks(np.array(xticks))
+
+            ax[1,k].set_ylim(0.75,1.25)
             k+=1
         if not weighted:
             ax[0,0].set_yscale("log")
@@ -290,7 +295,7 @@ class plotting_point_cloud():
         self.summary.log_image("{}ratio".format("weighted " if weighted else "unweighted "), [fig],self.step)
         plt.close()
 
-    def plot_mass(self, h_real, h_fake, leg=-1):
+    def plot_jet(self, h_real, h_fake, leg=-1):
         # This creates a histogram of the inclusive distributions and calculates the mass of each jet
         # and creates a histogram of that
         # if save, the histograms are logged to tensorboard otherwise they are shown

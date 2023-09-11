@@ -38,6 +38,7 @@ class MDMA(pl.LightningModule):
         self.relu = torch.nn.ReLU()
         self.mse = nn.MSELoss()
         self.step = 0
+
         self.name=self.hparams.dataset
         self._log_dict = {}
 
@@ -48,14 +49,17 @@ class MDMA(pl.LightningModule):
         self.gen_net.train()
         self.dis_net.train()
         # self.scaler.to(self.device)
-        hists=get_hists(self.hparams.bins,self.scaled_mins.reshape(-1)*0.99,self.scaled_maxs.reshape(-1)*1.01,calo=self.name=="calo")
+        hists=get_hists(self.hparams.bins,self.scaled_mins.reshape(-1)*1.1,self.scaled_maxs.reshape(-1)*1.1,calo=self.name=="calo")
         self.hists_real,self.hists_fake=hists["hists_real"],hists["hists_fake"]
         if self.name=="calo":
             self.weighted_hists_real,self.weighted_hists_fake=hists["weighted_hists_real"], hists["weighted_hists_fake"]
+            self.response_real, self.response_fake = hists["response_real"], hists["response_fake"]
+
 
         self.fake =[]
         self.batch = []
-
+        self.conds = []
+        self.masks = []
 
 
     def on_validation_epoch_end(self, *args, **kwargs):
@@ -81,30 +85,30 @@ class MDMA(pl.LightningModule):
 
     def sampleandscale(self, batch, mask, cond, scale=False):
         """Samples from the generator and optionally scales the output back to the original scale"""
-        fakes=[]
-        for i in range(5):
-            with torch.no_grad():
-                z = torch.normal(torch.zeros(batch.shape[0], batch.shape[1], batch.shape[2], device=batch.device), torch.ones(batch.shape[0], batch.shape[1], batch.shape[2], device=batch.device))
-                z[mask] = 0  # Since mean field is initialized by sum, we need to set the masked values to zero
-            if  not scale or not self.swa:
-                fake = self.gen_net(z, mask=mask.clone(), cond=cond.clone(), weight=False)
-            else:
-                fake= self.gen_net_averaged(z, mask=mask, cond=cond.clone(), weight=False)
-            fake[:,:,:] = self.relu(fake[:, :, :] - self.mins) + self.mins
-            fake[:,:,:] = -self.relu(self.maxs - fake[:, :, :]) + self.maxs
-            fake[mask] = 0  # set the masked values to zero
-            if scale:
-                fakes.append(fake)
-            else:
-                break
+        with torch.no_grad():
+            z = torch.normal(torch.zeros(batch.shape[0], batch.shape[1], batch.shape[2], device=batch.device), torch.ones(batch.shape[0], batch.shape[1], batch.shape[2], device=batch.device))
+            z[mask] = 0  # Since mean field is initialized by sum, we need to set the masked values to zero
+        if  not scale or not self.swa:
+            fake = self.gen_net(z, mask=mask.clone(), cond=cond.clone(), weight=False)
+        else:
+            fake= self.gen_net_averaged(z, mask=mask, cond=cond.clone(), weight=False)
+        fake[:,:,:] = self.relu(fake[:, :, :] - self.mins) + self.mins
+        fake[:,:,:] = -self.relu(self.maxs - fake[:, :, :]) + self.maxs
+        fake[mask] = 0  # set the masked values to zero
         if scale:
-            fake=torch.cat(fakes)
+
             fake_scaled = self.scaler.inverse_transform(fake).float()
+
+            if self.name=="calo":
+                maxs=torch.tensor(self.hparams.bins,device=fake.device)-1
+                maxs[0]=1e9
+                fake_scaled = torch.clamp(fake_scaled, min=torch.zeros(4,device=fake.device), max=maxs)
+
             assert (fake_scaled.reshape(-1,self.hparams.n_dim).max(0)[0]<=self.scaled_maxs[:self.hparams.n_dim]).all()
             if self.name=="calo":
                 fake_scaled[...,1:]=fake_scaled[...,1:].floor()
                 fake_scaled[:,:,2]=(fake_scaled[:,:,2]+torch.randint(0,self.num_alpha,(fake_scaled.shape[0],1),device=fake_scaled.device).expand(-1,batch.shape[1]))%self.num_alpha
-            fake_scaled[mask.repeat(5,1)] = 0  # set the masked values to zero
+            fake_scaled[mask] = 0  # set the masked values
             return fake_scaled
         else:
             return fake
@@ -139,7 +143,7 @@ class MDMA(pl.LightningModule):
             opt_d = torch.optim.Adam(self.dis_net.parameters(), lr=self.hparams.lr, betas=(0.0, 0.999), eps=1e-14)  #
         elif self.hparams.opt == "AdamW":
             opt_g = torch.optim.Adam(self.gen_net.parameters(), lr=self.hparams.lr, betas=(0.0, 0.999), eps=1e-14)
-            opt_d = torch.optim.AdamW(self.dis_net.parameters(), lr=self.hparams.lr, betas=(0.0, 0.999), eps=1e-14,)
+            opt_d = torch.optim.AdamW(self.dis_net.parameters(), lr=self.hparams.lr, betas=(0.0, 0.999), eps=1e-14, weight_decay=self.hparams.weightdecay)  #
         else:
             raise
         sched_d, sched_g = self.schedulers(opt_d, opt_g)
@@ -162,12 +166,8 @@ class MDMA(pl.LightningModule):
         self._log_dict["Training/pred_real_mean"]=pred_real.mean()
         self._log_dict["Training/pred_fake_mean"]=pred_fake.mean()
         d_loss=self.loss(pred_real.reshape(-1),pred_fake.reshape(-1),critic=True)
-
         self.d_loss_mean = d_loss.detach() * 0.01 + 0.99 * self.d_loss_mean if not self.d_loss_mean is None else d_loss
         self._log_dict["Training/d_loss"] = self.d_loss_mean
-
-
-        d_loss=d_loss
         if self.hparams.gp:
             gp = self._gradient_penalty(batch, fake, mask=mask, cond=cond)
             d_loss += self.hparams.lambda_gp*gp
@@ -235,26 +235,35 @@ class MDMA(pl.LightningModule):
         with torch.no_grad():
 
             if batch[0].shape[1]>0:
-
                 self._log_dict = {}
                 batch, mask, cond = batch[0], batch[1], batch[2]
-
-
                 if self.hparams.dataset=="calo":
                     cond = cond.reshape(-1,1,2).float()
                 else:
                     cond=cond.reshape(-1,1,1).float()
                 self.w1ps = []
-
                 fake = self.sampleandscale(batch=batch, mask=mask, cond=cond, scale=True)
+                assert (fake==fake).all()
+                self.batch.append(batch.cpu())
+                self.fake.append(fake.cpu())
+                self.masks.append(mask.cpu())
+                self.conds.append(cond.cpu())
                 if self.name=="jet":
-                    self.fake.append(fake.cpu())
-                    self.batch.append(batch.cpu())
+
+                    self.hists_real[-1].fill(mass(batch).cpu().numpy())
+                    self.hists_fake[-1].fill(mass(fake[:len(batch)]).cpu().numpy())
+                else:
+                    response_real = (fake[:len(cond), :, 0].sum(1) / (cond[:, :,0] + 10).exp()).cpu().numpy().reshape(-1)
+                    response_fake = (batch[:, :, 0].sum(1) / (cond[:, :,0] + 10).exp()).cpu().numpy().reshape(-1)
+                    self.response_real.fill(response_real)
+                    self.response_fake.fill(response_fake)
                 for i in range(self.hparams.n_dim):
                     self.hists_real[i].fill(batch[~mask][:,i].cpu().numpy())
                     self.hists_fake[i].fill(fake[:len(batch)][~mask][:,i].cpu().numpy())
-                self.hists_real[-1].fill(mass(batch).cpu().numpy())
-                self.hists_fake[-1].fill(mass(fake[:len(batch)]).cpu().numpy())
+                    if self.name=="calo" and i>0:
+                        self.weighted_hists_fake[i-1].fill(fake[:len(batch)][~mask][:,i].cpu().numpy(),weight=fake[:len(batch)][~mask][:,0].cpu().numpy())
+                        self.weighted_hists_real[i-1].fill(batch[~mask][:,i].cpu().numpy(),weight=batch[~mask][:,0].cpu().numpy())
+
             #self.fill_hist(real=batch, fake=fake)
 
 
@@ -293,7 +302,7 @@ class MDMA(pl.LightningModule):
             self.log("best_w1m", w1m_, on_step=False, prog_bar=False, logger=True, on_epoch=True)
             self.plot = plotting_point_cloud(step=self.global_step, logger=self.logger)
             try:
-                self.plot.plot_mass(self.hists_real,self.hists_fake)
+                self.plot.plot_jet(self.hists_real,self.hists_fake)
                 # self.plot.plot_scores(torch.cat(self.scores_real).numpy().reshape(-1), torch.cat(self.scores_fake.reshape(-1)).numpy(), False, self.global_step)
 
             except Exception as e:
@@ -355,8 +364,8 @@ class MDMA(pl.LightningModule):
 
             if plot:
                 self.plot = plotting_point_cloud(step=self.global_step, logger=self.logger)
-                self.plot.plot_ratio(self.hists_fake, self.hists_real, weighted=False)
-                self.plot.plot_ratio(self.weighted_hists_fake, self.weighted_hists_real, weighted=True)
+                self.plot.plot_calo(self.hists_fake, self.hists_real, weighted=False)
+                self.plot.plot_calo(self.weighted_hists_fake, self.weighted_hists_real, weighted=True)
                 self.plot.plot_response(self.response_fake, self.response_real )
         except:
             traceback.print_exc()

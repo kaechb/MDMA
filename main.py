@@ -59,7 +59,6 @@ def setup_model(config,data_module=None,model=False):
         model.bins=[600,config["num_z"],config["num_alpha"],config["num_R"]]
         model.num_z, model.num_alpha, model.num_R = config["num_z"], config["num_alpha"], config["num_R"]
         model.E_loss=config["E_loss"]
-        model.pos_loss=config["pos_loss"]
         model.lambda_gp=config["lambda_gp"]
         model.lambda_response=config["lambda_response"]
         model.min_weighted_w1p=0.1
@@ -74,10 +73,9 @@ def setup_model(config,data_module=None,model=False):
         model.pos_scale = torch.tensor(model.scaler.transfs[1].steps[2][1].scale_).cuda()
         model.pos_max_scale = torch.tensor(model.scaler.transfs[1].steps[0][1].scale_).cuda()
         model.pos_min = torch.tensor(model.scaler.transfs[1].steps[0][1].min_).cuda()
-        if config["dataset"]=="calo":
-                    model.power_lambda=model.scaler.transfs[0].lambdas_[0]
-                    model.mean=model.scaler.transfs[0]._scaler.mean_[0]
-                    model.scale=model.scaler.transfs[0]._scaler.scale_[0]
+        model.power_lambda=model.scaler.transfs[0].lambdas_[0]
+        model.mean=model.scaler.transfs[0]._scaler.mean_[0]
+        model.scale=model.scaler.transfs[0]._scaler.scale_[0]
     else:
         model.bins=[100,100,100]
         model.n_dim = 3
@@ -91,8 +89,9 @@ def setup_model(config,data_module=None,model=False):
     model.d_loss_mean=None
     model.g_loss_mean=None
     if config["dataset"]=="jet":
-        model.scaled_mins=torch.tensor(data_module.mins)
-        model.scaled_maxs=torch.tensor(data_module.maxs)
+        model.scaled_mins=torch.tensor(data_module.mins).cuda()
+        model.scaled_maxs=torch.tensor(data_module.maxs).cuda()
+        model.scaler.to("cuda")
     else:
         model.scaled_mins=torch.zeros(4).cuda()
         model.scaled_maxs=torch.tensor([1e9]+model.bins[1:]).cuda()
@@ -109,7 +108,7 @@ def train(config, logger,data_module,trainer,ckpt=False):
     print("This is run: ", logger.experiment.name)
     print("config:", config)
     if not ckpt:
-        model = setup_model(config,data_module)
+        model = setup_model(config,data_module,model=False)
     else:
         state_dict=torch.load(ckpt,map_location="cpu")
         config.update(**state_dict["hyper_parameters"])
@@ -164,8 +163,7 @@ if __name__ == "__main__":
     if len(logger.experiment.config.keys()) > 0:
         ckpt=None
         config.update(**logger.experiment.config)
-    else:
-        config=yaml.load(open("default_{}.yaml".format("calo")),Loader=yaml.FullLoader)
+
     if config["dataset"]=="calo":
 
         from dataloader_calo import PointCloudDataloader
@@ -185,6 +183,7 @@ if __name__ == "__main__":
         # ,ModelCheckpoint(monitor= 'features_E', mode= 'min',save_top_k=1,filename="minE_{features_E:.7f}-{w1p:.5f}", every_n_train_steps= 0, every_n_epochs= 1, train_time_interval= None)]
     trainer = pl.Trainer(
         devices=1,
+        precision=16 if config["amp"] else 32,
         accelerator="gpu",
         logger=logger,
         log_every_n_steps=300,

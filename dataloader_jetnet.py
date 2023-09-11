@@ -16,7 +16,7 @@ from helpers import *
 
 def custom_collate(data,avg_n): #(2)
         # x=torch.cat(torch.unsqueeze(data,0),)
-        data=torch.stack(data).squeeze(0)
+        data=torch.stack(data)
         mask=data[:,:,-1].bool()
         n=(~mask).sum(1).float()
 
@@ -121,7 +121,7 @@ class PointCloudDataloader(pl.LightningDataModule):
 
         self.n = data[:,:,-1].sum(axis=1)
         self.val_n = test_set[:,:,-1].sum(axis=1)
-        self.n_mean = torch.mean(self.n)
+        self.avg_n = torch.mean(self.n)
         if self.n_part>30:
             data[:,:,-1]=~data[:,:,-1].bool()
             test_set[:,:,-1]=~test_set[:,:,-1].bool()
@@ -152,13 +152,16 @@ class PointCloudDataloader(pl.LightningDataModule):
 
 
     def train_dataloader(self):
-        return DataLoader(self.data[:,:150],num_workers=16,shuffle=True,drop_last=True,collate_fn=lambda x:custom_collate(x,self.n_mean),batch_size=self.batch_size, batch_sampler=self.train_iterator ) if not self.sampler else DataLoader(self.data[:,:150],num_workers=16,collate_fn=lambda x:custom_collate(x,self.n_mean), sampler=self.train_iterator )
+        if self.sampler:
+            return DataLoader(self.data[:,:150],num_workers=16, collate_fn=lambda x:custom_collate(x,self.avg_n), batch_sampler=self.train_iterator )
+        else:
+            return DataLoader(self.data[:,:150],num_workers=16, collate_fn=lambda x:custom_collate(x,self.avg_n),shuffle=True,drop_last=True,batch_size=self.batch_size )
 
     def val_dataloader(self):
-        return DataLoader(self.test_set[:,:150], batch_size=self.batch_size*100, drop_last=False,num_workers=16,collate_fn=lambda x:custom_collate(x,self.n_mean))
+        return DataLoader(self.test_set[:,:150], batch_size=self.batch_size*100, drop_last=False,num_workers=16,collate_fn=lambda x:custom_collate(x,self.avg_n))
 
     def test_dataloader(self):
-        return DataLoader(self.real_test[:,:150], batch_size=self.batch_size*100, drop_last=False,num_workers=16,collate_fn=lambda x:custom_collate(x,self.n_mean))
+        return DataLoader(self.real_test[:,:150], batch_size=self.batch_size*100, drop_last=False,num_workers=16,collate_fn=lambda x:custom_collate(x,self.avg_n))
 
 
 

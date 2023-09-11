@@ -2,7 +2,7 @@ method: random
 metric:
   name: w1m
   goal: minimize
-name: "final2"
+name: "mixed"
 parameters:
   dataset:
     values:
@@ -19,7 +19,6 @@ parameters:
       - 3
   hidden:
     values:
-      - 128
       - 64
   hidden_gen:
     values:
@@ -43,12 +42,15 @@ parameters:
       - true
   fid:
     values:
-      - true
       - false
   bucket:
     values:
       - true
   weightnorm:
+    values:
+      - false
+      - true
+  amp:
     values:
       - false
       - true

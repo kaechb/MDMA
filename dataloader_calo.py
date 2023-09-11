@@ -134,7 +134,6 @@ class PointCloudDataloader(pl.LightningDataModule):
         self.batch_size=batch_size
         self.max=max
         self.new=True if name.find("new")>-1 else False
-        self.cart=True if name.find("cart")>-1 else False
         self.aug = augmentation
         super().__init__()
 
