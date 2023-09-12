@@ -45,7 +45,8 @@ class MDMA(pl.LightningModule):
 
 
     def on_validation_epoch_start(self, *args, **kwargs):
-
+        # set up the histograms for the validation step
+        # also create a list of the real and fake samples and conditions + masks
         self.gen_net.train()
         self.dis_net.train()
         # self.scaler.to(self.device)
@@ -71,17 +72,13 @@ class MDMA(pl.LightningModule):
         self.data_module = data_module
 
     def transform(self,x):
+        # boxcox transform for energy for calochallenge
         x=(x**self.power_lambda-1)/self.power_lambda
         return (x-self.mean)/self.scale
 
     def inverse_transform(self,x):
+        # inverse boxcox transform for energy for calochallenge
         return ((x*self.scale+self.mean)*self.power_lambda+1)**(1/self.power_lambda)
-
-    def voxelize(self, x):
-        x = x*self.pos_scale+self.pos_mean
-        x = 1 / (1 + torch.exp(-x))
-        x = ((x-self.pos_min)/self.pos_max_scale).floor()
-        return x
 
     def sampleandscale(self, batch, mask, cond, scale=False):
         """Samples from the generator and optionally scales the output back to the original scale"""
@@ -115,6 +112,7 @@ class MDMA(pl.LightningModule):
 
 
     def calc_E_loss(self, fake, batch, mask, cond):
+        # calculate the energy loss for the calochallenge, response between real and fake should be the same
         response_fake=self.inverse_transform(fake[:,:,0]).sum(1).reshape(-1)/((cond[:,0]+10).exp())
         response_real=self.inverse_transform(batch[:,:,0]).sum(1).reshape(-1)/((cond[:,0]+10).exp())
         E_loss =  self.mse(response_real,response_fake)

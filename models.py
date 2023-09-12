@@ -75,17 +75,11 @@ class Block(nn.Module):
             x = self.cloudnorm(x, mask)
         x_cls = self.ln(self.fc0(self.act(x_cls)))
         x_cls, w = self.attn(x_cls, x, x, key_padding_mask=mask, need_weights=False)
-
-        x_cls = self.fc1_cls(torch.cat((x_cls, cond[:, :, -1:]), dim=-1))  # +res_cls#+x.mean(dim=1).
+        x_cls = self.fc1_cls(torch.cat((x_cls, cond[:, :, -1:]), dim=-1))
         if self.glu:
             x_cls = self.act(F.glu(torch.cat((x_cls, self.cond_cls(cond[:, :, :1])), dim=-1)))
-
-        #     x_cls = self.act(self.fc1_cls((x_cls)))#+x.mean(dim=1).
-        #     x_cls = self.act(F.glu(torch.cat((x_cls,self.cond_cls(cond)),dim=-1)))
         x = self.fc1(torch.cat((x, x_cls.expand(-1, x.shape[1], -1)), dim=-1)) + res
         x_cls = self.act(self.fc2_cls(x_cls))
-        # x_cls =x_cls+res_cls
-        # x=F.glu(torch.cat((x,self.cond(cond[:,:,:1]).expand(-1,x.shape[1],-1)),dim=-1))
         return x, x_cls, w
 
 
@@ -109,9 +103,6 @@ class Gen(nn.Module):
         x_cls = x.sum(1).unsqueeze(1).clone() / self.avg_n
         for layer in self.encoder:
             x, x_cls, w = layer(x, x_cls=x_cls, mask=mask, cond=cond)
-
-        # if self.cond:
-        #     x=F.glu(torch.cat((x,self.cond(cond[:,:,:1]).expand(-1,x.shape[1],-1)),dim=-1))
         x = self.out(self.act(x))
         return x
 

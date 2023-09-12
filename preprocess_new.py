@@ -174,7 +174,7 @@ class DQ(BaseEstimator, TransformerMixin):
         X=np.floor(X)
         return X
 class ScalerBaseNew:
-    def __init__(self, transfs,name, featurenames,overwrite=False,data_dir="/beegfs/desy/user/kaechben/calochallenge/"):
+    def __init__(self, transfs,name, featurenames,overwrite=False,data_dir="./"):
         self.transfs = transfs
         self.featurenames = featurenames
         self.n_features=len(featurenames)
@@ -188,7 +188,6 @@ class ScalerBaseNew:
     def save_scalar(self, pcs,save=False):
         # The features need to be converted to numpy immediatly
         # otherwise the queuflow afterwards doesnt work
-        print("pre scaling")
         pcs=pcs.astype(np.float64)
         self.plot_scaling(pcs)
         pcs = np.hstack(

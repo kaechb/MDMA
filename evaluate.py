@@ -66,7 +66,7 @@ def format_mean_sd(mean, sd):
     else:
         return f"${mean:.{decimals}f} \\pm {sd:.{decimals}f}$"
 def print_table(results):
-    # print_table.index=["t"]#"q"
+
     df=pd.DataFrame(results).copy()
 
     df["pmm"]=df["w1m"].apply(lambda x:x[1].mean())
@@ -84,8 +84,6 @@ def print_table(results):
     cols=["name","w1m","w1efp","w1m","pmm","pme","pmp","cov","mmd","fpd","kpd"]
 
     df=df.set_index("model",drop=True)
-    # df=df[["w1m","w1p","w1efp","fpnd","cov","mmd","pmm","pmp","pme","model"]]
-
     df.loc[:,"w1m"]*=1000
     df.loc[:,"w1p"]*=1000
     df["w1p"]=df["w1p"]
@@ -112,25 +110,28 @@ def print_table(results):
     for p in ["t"]:
         temp=df.loc[["MDMA","EPiC","IN"],:]
 
-        for col in df.drop("model",axis=1).columns:
+        for col in df.columns:
             if col not in ["w1m","w1p","w1efp","fpd","kpd" ]:
                 continue
-            try:
-                temp_index=temp[col].astype(str).str.replace("$","").str.split("\\").str[0].astype(float)
-                mins=temp_index==temp_index.drop("IN",0).min()
-            except:
-                mins=0
+
+            temp_index=temp[col].astype(str).str.replace("$","").str.split("\\").str[0].astype(float)
+            mins=temp_index==temp_index.drop("IN").min()
+
+
             temp.loc[mins,col]="$\mathbf{"+temp.loc[mins,col].astype(str).str.replace("$","")+"}$"
-        temp=temp[["model","w1m","w1p","w1efp","kpd","fpd"]]
-        temp.columns=["model","$W_1^M (\times 10^{3})$","$W_1^P (\times 10^{3})$","$W_1^{EFP}(\times 10^{5})$","$KPD(\times 10^{4})$","$FPD(\times 10^{4})$"]
+        temp=temp.reset_index()[["model","w1m","w1p","w1efp","kpd","fpd"]]
+        temp.columns=["model","$W_1^M (\times 10^{3})$","$W_1^P (\times 10^{3})$","$W_1^{EFP}(\times 10^{5})$","$KPD(\times 10^{4})$","$FPD$"]
         text=temp.to_latex(index=False,escape=False)
         parton="Gluon" if p=="g" else "Light Quark" if p=="q" else "Top Quark"
-        tex+="\multirow{3}{*}{"+parton+"} & "+text.split("KPD \\\\")[1].split("\\bottomrule")[0].replace("\\\\","\\\\&").replace("\\midrule","").replace("  ","")[:-2]+"\cline{1-8}"
+        tex+="\multirow{3}{*}{"+parton+"} & "+text.split("FPD")[1].split("\\bottomrule")[0].replace("\\\\","\\\\&").replace("\\midrule","").replace("  ","")[:-2]+"\cline{1-7}"
         tex+="\n"
     print(tex)
 
 
 def setup_model(config,data_module=None,model=False):
+    ''' IN: config: dict containing hyperparameters
+        OUT: model: MDMA model with hyperparameters set
+    '''
     if not model:
         model = MDMA(**config)
     if config["dataset"]=="calo":
@@ -187,7 +188,6 @@ def jetnet_eval(model,data_module):
 
     with torch.no_grad():
         kde_sample = kde.resample( 50000 + 10000).T  # account for cases were kde_sample is not in [1,150]
-        # z = torch.normal(torch.zeros((250000, 150,3), device="cpu"), torch.ones((250000, 150,3), device="cpu"))
         z = torch.normal(torch.zeros((50000, 150,3), device="cpu"), torch.ones((50000, 150,3), device="cpu"))
         n_sample = np.rint(kde_sample)
         n_sample = torch.tensor(n_sample[(n_sample >= 1) & (n_sample <= 150)]).cuda().long()
@@ -209,44 +209,26 @@ def jetnet_eval(model,data_module):
         for temp,name in zip([fake_scaled,val,epic],["MDMA","IN","EPiC"]):
 
             w1m_ = w1m(temp[:, :, :3], true[:, :, :3], num_eval_samples=len(true),num_batches=16)
-
             kpd_real = get_fpd_kpd_jet_features(true, efp_jobs=20)
             kpd_fake = get_fpd_kpd_jet_features(temp[: len(true),:,:3], efp_jobs=20)
             kpd_ = kpd(kpd_real, kpd_fake)
             fpd_ = fpd(kpd_real, kpd_fake, min_samples=10000, max_samples=len(true))
-            # kpd_=[np.array([0]),np.array([0.1])]
-            # fpd_=[np.array([0]),np.array([0.1])]
             data_ms = mass(true).numpy()
             i = 0
             w_dist_list = []
-            # for _ in range(n):
-            #     gen_ms = mass(fake_scaled[i : i + len(true)]).numpy()
-            #     i += len(true)
-            #     w_dist_ms = wasserstein_distance(data_ms, gen_ms)
-            #     w_dist_list.append(w_dist_ms)
-            # w1m_2 = np.mean(np.array(w_dist_list))
-            # w1m_2std = np.std(np.array(w_dist_list))
-
-            w1efp_ = w1efp(temp[: len(true)], true[:, :, :3], num_eval_samples=len(true), efp_jobs=20)
-            # w1efp_=[np.array([0]),np.array([0.1])]
+            w1efp_ =w1efp(temp[: len(true)], true[:, :, :3], num_eval_samples=len(true), efp_jobs=20)
             w1p_ = w1p(temp[: len(true),:,:3], true[:, :, :3], num_eval_samples=len(true))
 
             results_temp = {"name": ["t"], "model": [name], "w1m": [w1m_], "w1p": [w1p_],  "w1efp": [w1efp_], "kpd": [kpd_], "fpd": [fpd_]}#"w1efp": [w1efp_], "kpd": [kpd_], "fpd": [fpd_]
             results=pd.concat((results,pd.DataFrame(results_temp).set_index("name",drop=True)),axis=0)
         return results
 
-if len(sys.argv)>1:
-    NAME=sys.argv[1]
-else:
-    NAME="jet"
-if NAME=="calo":
-     from dataloader_calo import PointCloudDataloader
-     ckpt="/gpfs/dust/maxwell/user/kaechben/calochallenge/MDMA_calo/83n3r9n7/checkpoints/epoch=294-w1p=0.00045-weighted_w1p=0.00057.ckpt"
-else:
-    from dataloader_jetnet import PointCloudDataloader
-    name="jet"
-    ckpt="./jet.ckpt"
-    config=yaml.load(open("default_{}.yaml".format(NAME)),Loader=yaml.FullLoader)
+
+
+from dataloader_jetnet import PointCloudDataloader
+name="jet"
+ckpt="./ckpts/jet.ckpt"
+config=yaml.load(open("default_{}.yaml".format(name)),Loader=yaml.FullLoader)
 
 torch.set_float32_matmul_precision('medium' )
 data_module = PointCloudDataloader(**config)
@@ -255,7 +237,6 @@ state_dict=torch.load(ckpt,map_location="cpu")
 config.update(**state_dict["hyper_parameters"])
 config["L2"]=False
 model =MDMA.load_from_checkpoint(ckpt,**config)
-# model=MDMA.load_from_checkpoint(ckpt,strict=True)
 model=setup_model(config,data_module,model)
 model.swa=config["start_swa"]
 model.load_datamodule(data_module)
@@ -276,9 +257,7 @@ model.gen_net.avg_n=torch.cat(n,dim=0).float().cuda().mean()
 model.dis_net.avg_n=torch.cat(n,dim=0).float().cuda().mean()
 model.scaled_mins=data_module.mins
 model.scaled_maxs=data_module.maxs
-if NAME=="calo":
-     pass
-else:
-    results=jetnet_eval(model,data_module)
-    print_table(results)
+
+results=jetnet_eval(model,data_module)
+print_table(results)
 #trainer.
