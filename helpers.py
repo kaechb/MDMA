@@ -421,10 +421,11 @@ def get_hists(bins,mins,maxs,calo=False):
 
 
 class MultiheadL2Attention(nn.Module):
-    def __init__(self, embed_size, num_heads):
+    def __init__(self, embed_size, num_heads, kdim=None, vdim=None):
         super(MultiheadL2Attention, self).__init__()
         self.num_heads = num_heads
         self.head_dim = embed_size // num_heads
+
 
         # Ensure that the embedding size is a multiple of the number of heads
         assert (
@@ -433,8 +434,8 @@ class MultiheadL2Attention(nn.Module):
 
         # Input linear layers
         self.q_linear = spectral_norm(nn.Linear(embed_size, embed_size, bias=False))
-        self.k_linear = spectral_norm(nn.Linear(embed_size, embed_size, bias=False))
-        self.v_linear = spectral_norm(nn.Linear(embed_size, embed_size, bias=False))
+        self.k_linear = spectral_norm(nn.Linear(embed_size if not kdim else kdim, embed_size,  bias=False))
+        self.v_linear = spectral_norm(nn.Linear(embed_size if not vdim else vdim, embed_size, bias=False))
 
         # Output linear layer
         self.out = spectral_norm(nn.Linear(embed_size, embed_size, bias=False))
