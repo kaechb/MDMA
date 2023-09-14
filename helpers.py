@@ -404,8 +404,8 @@ def get_hists(bins,mins,maxs,calo=False):
         hists["response_real"]=hist.Hist(hist.axis.Regular(100, 0.6, 1.1))
         hists["response_fake"]=hist.Hist(hist.axis.Regular(100, 0.6, 1.1))
 
-        hists["hists_real"].append(hist.Hist(hist.axis.Regular(100, 0, 6000)))
-        hists["hists_fake"].append(hist.Hist(hist.axis.Regular(100, 0, 6000)))
+        hists["hists_real"].append(hist.Hist(hist.axis.Regular(100, 0, 6500)))
+        hists["hists_fake"].append(hist.Hist(hist.axis.Regular(100, 0, 6500)))
 
         for n in bins[1:]:
             hists["hists_real"].append(hist.Hist(hist.axis.Integer(0, n)))
