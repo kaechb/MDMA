@@ -4,16 +4,19 @@ import sys
 import time
 import traceback
 
-import losses
+import utils.losses as losses
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
 import wandb
 import yaml
-from fit import MDMA
-from helpers import *
-from models import Disc, Gen
+from fit.fit import MDMA
+from fit.fit_nf import NF
+from fit.fit_tnf import TNF
+from fit.fit_pnf import PNF
+from utils.helpers import *
+from models.models import Disc, Gen
 from preprocess_new import Cart, DQLinear, LogitTransformer, ScalerBaseNew
 from preprocess_new import SqrtTransformer
 from preprocess_new import SqrtTransformer as LogTransformer
@@ -31,7 +34,7 @@ from tqdm import tqdm
 if len(sys.argv)>1:
     NAME=sys.argv[1]
 else:
-    NAME="calo"
+    NAME="jet_pnf"
 def fixmepls1(model):
     for module in model.modules():
         for _, hook in module._forward_pre_hooks.items():
@@ -58,9 +61,22 @@ def setup_model(config, data_module=None, model=False):
     Returns:
         object: The configured model object.
     """
+    if not model and config["model"]=="MDMA":
+            model = MDMA(**config)
+    elif not model and config["model"]=="NF":
+        model = NF(**config)
+    elif not model and config["model"]=="TNF":
+        model = TNF(**config)
+    elif not model and config["model"]=="PNF":
+        model = PNF(**config)
 
-    if not model:
-        model = MDMA(**config)
+    if config["model"]!="NF":
+            model.loss = losses.hinge if config["gan"] == "hinge" else losses.wasserstein if config["gan"] == "wgan" else losses.least_squares
+            model.gp = config["gp"]
+            model.d_loss_mean = None
+            model.g_loss_mean = None
+
+
     if config["dataset"] == "calo":
         model.bins = [600, config["num_z"], config["num_alpha"], config["num_R"]]
         model.num_z, model.num_alpha, model.num_R = config["num_z"], config["num_alpha"], config["num_R"]
@@ -90,10 +106,7 @@ def setup_model(config, data_module=None, model=False):
         model.min_pt = data_module.min_pt
         model.max_pt = data_module.max_pt
     model.i = 0
-    model.loss = losses.hinge if config["gan"] == "hinge" else losses.wasserstein if config["gan"] == "wgan" else losses.least_squares
-    model.gp = config["gp"]
-    model.d_loss_mean = None
-    model.g_loss_mean = None
+
     if config["dataset"] == "jet":
         model.scaled_mins = torch.tensor(data_module.mins).cuda()
         model.scaled_maxs = torch.tensor(data_module.maxs).cuda()
@@ -105,7 +118,7 @@ def setup_model(config, data_module=None, model=False):
     return model
 
 def train(config, logger,data_module,trainer,ckpt=False):
-    torch.set_float32_matmul_precision('medium' )
+    # torch.set_float32_matmul_precision('medium' )
     # This function is a wrapper for the hyperparameter optimization module called ray
     # Its parameters hyperopt and ckpt are there for convenience
     # Config is the only relevant parameter as it sets the trainings hyperparameters
@@ -113,16 +126,23 @@ def train(config, logger,data_module,trainer,ckpt=False):
     # Callbacks to use during the training, we  checkpoint our models
     print("This is run: ", logger.experiment.name)
     print("config:", config)
+    swa=config["start_swa"]
     if not ckpt:
         model = setup_model(config,data_module,model=False)
-    else:
-        state_dict=torch.load(ckpt,map_location="cpu")
-        config.update(**state_dict["hyper_parameters"])
-        config["lr"]*=0.01
-        model=MDMA(**config).load_from_checkpoint(ckpt,**config,strict=True)
 
+
+    else:
+        state_dict=torch.load(ckpt,map_location="cuda")
+        config.update(**state_dict["hyper_parameters"])
+        config["swa"]=swa
+        if config["model"]=="MDMA":
+            model=MDMA(**config).load_from_checkpoint(ckpt,**config,strict=True)
+        elif config["model"]=="NF":
+            model=NF(**config).load_from_checkpoint(ckpt,**config,strict=True)
+        elif config["model"]=="TNF":
+            model=TNF(**config).load_from_checkpoint(ckpt,**config,strict=True)
         model=setup_model(config,data_module,model)
-        model.swa=config["start_swa"]
+
         if model.swa: # this is a bit of a hack to get the SWA to work when loading it when there is a spectral/weight norm
             for param in model.parameters():
                 param.data = param.data.detach()
@@ -143,19 +163,20 @@ def train(config, logger,data_module,trainer,ckpt=False):
     model.maxs=maxs.cuda()
     model.mins=mins.cuda()
     model.avg_n=torch.cat(n,dim=0).float().cuda().mean()
-    model.gen_net.avg_n=torch.cat(n,dim=0).float().cuda().mean()
-    model.dis_net.avg_n=torch.cat(n,dim=0).float().cuda().mean()
-    if model.swa:
-        model.gen_net_averaged._modules["module"].avg_n=model.gen_net.avg_n
+    if config["model"]=="MDMA":
+        model.gen_net.avg_n=torch.cat(n,dim=0).float().cuda().mean()
+        model.dis_net.avg_n=torch.cat(n,dim=0).float().cuda().mean()
+        if model.swa:
+            model.gen_net_averaged._modules["module"].avg_n=model.gen_net.avg_n
     if ckpt :
-        trainer.fit(model,datamodule=data_module)
+        trainer.fit(model,datamodule=data_module,ckpt_path=ckpt)
     else:
         trainer.fit(model,datamodule=data_module,)
 
 if __name__ == "__main__":
 
 
-    config=yaml.load(open("default_{}.yaml".format(NAME)),Loader=yaml.FullLoader)
+    config=yaml.load(open("hparams/default_{}.yaml".format(NAME)),Loader=yaml.FullLoader)
     #set up WandB logger
     logger = WandbLogger(
         save_dir="/gpfs/dust/maxwell/user/{}/calochallenge".format(os.environ["USER"]),
@@ -167,9 +188,9 @@ if __name__ == "__main__":
         ckpt=None
         config.update(**logger.experiment.config)
     if config["dataset"]=="calo":
-        from dataloader_calo import PointCloudDataloader
+        from utils.dataloader_calo import PointCloudDataloader
     else:
-        from dataloader_jetnet import PointCloudDataloader
+        from utils.dataloader_jetnet import PointCloudDataloader
     ckpt=config["ckpt"]
     data_module = PointCloudDataloader(**config)
     data_module.setup("train")
@@ -182,10 +203,10 @@ if __name__ == "__main__":
         precision=16 if config["amp"] else 32,
         accelerator="gpu",
         logger=logger,
-        log_every_n_steps=300,
+        log_every_n_steps=100,
         max_epochs=20000,
         callbacks=callbacks,
-        val_check_interval=10 if ckpt and config["start_swa"] else 10000,
+        val_check_interval=100 if ckpt and config["start_swa"] else 2000 if config["model"]=="NF" else 10000,
         check_val_every_n_epoch=None,
         num_sanity_val_steps=2,
         enable_progress_bar=False,

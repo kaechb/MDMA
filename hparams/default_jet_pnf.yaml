@@ -1,0 +1,52 @@
+"adversarial": false
+"batch_size": 128
+"ckpt_flow": "/gpfs/dust/maxwell/user/kaechben/thesis/t_flow.ckpt"
+"ckpt": false
+"dropout": 0.0
+"dataset": "jet"
+"heads_gen": 8
+"heads": 8
+"hidden_gen": 256
+"hidden": 256
+"l_dim_gen": 16
+"l_dim": 16
+"lr": 0.0001
+"mass_loss": false
+"max_epochs": 2000
+"max": false
+"mean_field_loss": true
+"model": "PNF"
+"gan": "lsgan"
+"gp": false
+"freq": 1
+"name": "jet_pnf"
+"num_layers_gen": 7
+"opt": "Adam"
+"weightdecay": 0.0
+"parton": "t"
+"n_dim": 3
+"num_heads": 8
+"num_layers": 4
+"n_part": 30
+"N": 1
+"noise": false
+"cond_dim" : 1
+"bins":
+  - 100
+  - 100
+  - 100
+  - 100
+"pretrain": false
+"sampler": true
+"start_swa": false
+"amp": false
+"coupling_layers": 20
+"coupling_hidden": 256
+"spline": true
+"network_layers": 4
+"hidden_features": 128
+"tail_bound": 6
+"num_bins": 8
+"batchnorm": false
+"context_features": 0
+"dropout": 0
