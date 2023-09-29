@@ -93,17 +93,27 @@ def format_mean_sd(mean, sd):
         return f"${mean:.{decimals}f} \\pm {sd:.{decimals}f}$"
 def print_table(results):
 
-    df=pd.DataFrame(results).copy()
-    df["pmm"]=df["w1m"].apply(lambda x:x[1].mean())
-    df["w1m"]=df["w1m"].apply(lambda x:x[0].mean())
-    df["pmp"]=df["w1p"].apply(lambda x:x[1].mean())
-    df["w1p"]=df["w1p"].apply(lambda x:x[0].mean())
-    df["pme"]=df["w1efp"].apply(lambda x:x[1].mean())
-    df["w1efp"]=df["w1efp"].apply(lambda x:x[0].mean())
-    df["pmf"]=df["fpd"].apply(lambda x:x[1].mean())
-    df["fpd"]=df["fpd"].apply(lambda x:x[0].mean())
-    df["pmk"]=df["kpd"].apply(lambda x:x[1].mean())
-    df["kpd"]=df["kpd"].apply(lambda x:x[0].mean())
+    def weighted_mean(x):
+        x,w=np.array(x[0]),np.array(x[1])
+        weights=1/w**2
+        return np.sum(x*weights)/np.sum(weights)
+    def weighted_std(x):
+        w=np.array(x[1])
+        sigma=np.sqrt(1/sum(w))
+        return sigma
+    df=results
+    df["pmm"]=df["w1m"].apply(lambda x:x).apply(weighted_std)
+    df["w1m"]=df["w1m"].apply(lambda x:x).apply(weighted_mean)
+    df["pmp"]=df["w1p"].apply(lambda x:x).apply(weighted_std)
+    df["w1p"]=df["w1p"].apply(lambda x:x).apply(weighted_mean)
+    df["pme"]=df["w1efp"].apply(lambda x:x).apply(weighted_std)
+    df["w1efp"]=df["w1efp"].apply(lambda x:x).apply(weighted_mean)
+
+    df["fpd_std"]=df["fpd"].apply(lambda x:x[1]).apply(np.mean)
+    df["fpd"]=df["fpd"].apply(lambda x:x[0]).apply(np.mean)
+    df["kpd_std"]=df["kpd"].apply(lambda x:x[1]).apply(np.mean)
+    df["kpd"]=df["kpd"].apply(lambda x:x[0]).apply(np.mean)
+
     cols=["name","w1m","w1efp","w1m","pmm","pme","pmp","cov","mmd","fpd","kpd","time"]
     replace_dict={"MPGAN":"MPGAN","t_cpflow":"PF","t_ipflow":"IPF","t_apflow":"APF","t_nflow":"NF","t_ccnflow":"NF(cc)","t_cnflow":"NF(c)","t_tnflow":"TNF","IN":"IN"}
     df.loc[:,"model"]=df["model"].apply(lambda x:replace_dict[x])
