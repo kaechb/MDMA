@@ -1,10 +1,10 @@
-"batch_size": 1024
-"ckpt_flow": "/gpfs/dust/maxwell/user/kaechben/thesis/t_flow.ckpt"
-"ckpt": false
+"batch_size": 128
+"ckpt_flow": "/gpfs/dust/maxwell/user/kaechben/thesis/jetnet30/t_flow.ckpt"
+"ckpt": ""
 "dropout": 0.0
 "dataset": "jet"
-"heads_gen": 8
-"heads": 8
+"heads_gen": 16
+"heads": 16
 "hidden_gen": 256
 "hidden": 256
 "l_dim_gen": 16
@@ -40,8 +40,8 @@
 "coupling_layers": 10
 "coupling_hidden": 256
 "spline": true
-"network_layers": 4
-"hidden_features": 128
+"network_layers": 6
+"hidden_features": 256
 "tail_bound": 6
 "num_bins": 8
 "batchnorm": false

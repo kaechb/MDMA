@@ -143,6 +143,7 @@ class PointCloudDataloader(pl.LightningDataModule):
         self.data = data.float()
 
         self.test_set =test_set.float()
+        self.unscaled_real_test=self.real_test.clone()
         if self.n_part==30:
             temp=self.test_set[:,:,:-1].reshape(-1,self.n_dim)
             temp[~(self.test_set[:,:,-1]).bool().reshape(-1)]=self.scaler.transform(temp[~(self.test_set[:,:,-1]).bool().reshape(-1)])

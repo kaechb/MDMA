@@ -15,10 +15,10 @@ from utils.helpers import CosineWarmupScheduler
 rng = np.random.default_rng()
 import matplotlib.pyplot as plt
 # from metrics import *
-
+import pickle
 from models.flowmodels import Flow,TDisc,TGen
 from utils.helpers import get_hists, plotting_point_cloud, mass
-
+from time import time
 
 def response(fake,batch, cond, mask):
     response_real=(fake[:,:,0].sum(1).reshape(-1)/(cond[:,0]+10).exp()).cpu().numpy()
@@ -35,9 +35,14 @@ class TNF(pl.LightningModule):
 
         self.gen_net = TGen(**hparams)
         self.dis_net = TDisc(**hparams)
+
+        if "ckpt_flow" in hparams.keys() and hparams["ckpt_flow"].find("jetnet30/")==-1:
+            hparams["ckpt_flow"]="/".join(hparams["ckpt_flow"].split("/")[:-1])+"/jetnet30/"+hparams["ckpt_flow"].split("/")[-1]
         state_dict=torch.load(hparams["ckpt_flow"])["state_dict"]
+        config=torch.load(hparams["ckpt_flow"])["hyper_parameters"]
         flow_state_dict = {k.replace('flow.', ''): v for k, v in state_dict.items() if 'flow' in k}
-        flow=Flow(**torch.load(hparams["ckpt_flow"])["hyper_parameters"])
+
+        flow=Flow(**config)
         flow.flow.load_state_dict(flow_state_dict)
         self.flow=flow.flow
         self.relu = torch.nn.ReLU()
@@ -46,6 +51,9 @@ class TNF(pl.LightningModule):
 
         self.name=self.hparams.dataset
         self._log_dict = {}
+        self.times=[]
+        with open("kde/" +"t" + "_kde.pkl", "rb") as f:
+            self.kde=pickle.load(f)
 
 
 
@@ -89,7 +97,14 @@ class TNF(pl.LightningModule):
         """Samples from the generator and optionally scales the output back to the original scale"""
         with torch.no_grad():
             z=self.flow.sample(len(batch)).reshape(-1,self.hparams.n_part,self.hparams.n_dim)
-            z[mask] = 0  # Since mean field is initialized by sum, we need to set the masked values to zero
+            if scale:
+                kde_sample = self.kde.resample(int(len(batch)*2)).T
+                n_sample = np.rint(kde_sample)
+                n_sample = torch.tensor(n_sample[(n_sample >= 1) & (n_sample <= 150)]).cuda().long()
+                indices = torch.arange(self.hparams.n_part, device="cuda")
+                mask = indices.view(1, -1) < torch.tensor(n_sample).view(-1, 1)
+                mask = ~mask.bool()[: len(z)]
+                z[mask] = 0  # Since mean field is initialized by sum, we need to set the masked values to zero
         if  not scale or not self.swa:
             fake = self.gen_net(z, mask=mask.clone(), )
         else:
@@ -100,8 +115,9 @@ class TNF(pl.LightningModule):
         if scale:
 
             fake_scaled = self.scaler.inverse_transform(fake).float()
+            # fake_scaled[fake_scaled[:,:,2]<1e-4,:]=0
             assert (fake_scaled.reshape(-1,self.hparams.n_dim).max(0)[0]<=self.scaled_maxs[:self.hparams.n_dim]).all()
-            fake_scaled[mask] = 0  # set the masked values
+            #fake_scaled[mask] = 0  # set the masked values
             return fake_scaled
         else:
             return fake
@@ -137,8 +153,8 @@ class TNF(pl.LightningModule):
         return [opt_d, opt_g], [sched_d, sched_g]
 
     def schedulers(self, opt_d, opt_g):
-        sched_d = CosineWarmupScheduler(opt_d, 2000, 3000 * 1000)
-        sched_g = CosineWarmupScheduler(opt_g, 2000, 3000 * 1000)
+        sched_d = CosineWarmupScheduler(opt_d, 2000, 1500 * 1000)
+        sched_g = CosineWarmupScheduler(opt_g, 2000, 1500 * 1000)
         return sched_d, sched_g
 
     def train_disc(self, batch, mask, opt_d):
@@ -210,8 +226,11 @@ class TNF(pl.LightningModule):
                 else:
                     cond=cond.reshape(-1,1,1).float()
                 self.w1ps = []
+                start=time()
                 fake = self.sampleandscale(batch=batch, mask=mask, scale=True)
+
                 batch = self.scaler.inverse_transform(batch).float()
+                self.times.append(time()-start)
                 assert (fake==fake).all()
                 self.batch.append(batch.cpu())
                 self.fake.append(fake.cpu())
@@ -245,9 +264,9 @@ class TNF(pl.LightningModule):
     def jetnet_evaluation(self):
         from jetnet.evaluation import fpd, kpd, get_fpd_kpd_jet_features, w1m
         # Concatenate along the first dimension
-        real = torch.cat([torch.nn.functional.pad(batch, (0, 0, 0, 150 - batch.size(1))) for batch in self.batch],dim=0)
+        real = torch.cat([torch.nn.functional.pad(batch, (0, 0, 0, 30 - batch.size(1))) for batch in self.batch],dim=0)
 
-        fake= torch.cat([torch.nn.functional.pad(batch, (0, 0, 0, 150 - batch.size(1))) for batch in self.fake],dim=0)
+        fake= torch.cat([torch.nn.functional.pad(batch, (0, 0, 0, 30 - batch.size(1))) for batch in self.fake],dim=0)
         print("sample lengths:",len(real),len(fake))
         if not hasattr(self,"true_fpd") or not hasattr(self,"full"):
             self.true_fpd = get_fpd_kpd_jet_features(real, efp_jobs=1)
@@ -256,7 +275,7 @@ class TNF(pl.LightningModule):
         """calculates some metrics and logs them"""
         # calculate w1m 10 times to stabilize for ckpting
 
-        w1m_ = w1m(real,fake,num_batches=16,num_eval_samples=250000)[0]
+        w1m_ = w1m(real,fake,num_batches=16)[0]
         print(w1m_)
         fpd_log = 10
         self.log("w1m", w1m_, on_step=False, prog_bar=False, logger=True, on_epoch=True)

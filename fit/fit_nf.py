@@ -31,7 +31,7 @@ from models.flowmodels import Flow
 from utils.helpers import plotting_point_cloud,mass, get_hists
 import matplotlib.pyplot as plt
 
-
+from time import time
 class NF(pl.LightningModule):
 
 
@@ -47,6 +47,7 @@ class NF(pl.LightningModule):
         self.name=hparams["name"]
 
         self.n_part=self.hparams.n_part
+        self.times=[]
         #This is the Normalizing flow model to be used later, it uses as many
         #coupling_layers as given in the config
 
@@ -100,13 +101,15 @@ class NF(pl.LightningModule):
                 if self.hparams.context_features>0:
                     fake=self.flow.sample(1,cond)
                 else:
-                    fake=self.flow.sample(len(batch)*self.n_part)
+                    fake=self.flow.sample(len(batch))
             except:
                 pass
         #This make sure that everything is on the right device
         #Not here that this sample is conditioned on the mass of the current batch allowing the MSE
         #to be calculated later on
-
+        fake=fake.reshape(-1,3)
+        fake[fake[:,2].abs()<1e-4]=0
+        fake=fake.reshape(-1,self.n_part*self.n_dim)
         if scale:
             fake=self.scaler.inverse_transform(fake[:,:self.n_dim*self.n_part].reshape(-1,self.n_part,self.n_dim))
             fake[mask]=0
@@ -168,7 +171,6 @@ class NF(pl.LightningModule):
             if batch[0].shape[1]>0:
 
                 self._log_dict = {}
-
                 batch, mask, cond = batch[0], batch[1], batch[2]
 
                 scaled_batch=self.scaler.inverse_transform(batch.reshape(-1,self.n_part,self.n_dim))
@@ -178,8 +180,9 @@ class NF(pl.LightningModule):
                 self.log("val_logprob",logprob, logger=True)
 
                 self.w1ps = []
+                start=time()
                 fake,mf = self.sampleandscale(batch=batch, mask=mask, cond=cond, scale=True)
-
+                self.times.append(time()-start)
                 batch=scaled_batch.reshape(-1,self.n_part,self.n_dim)
                 fake=fake.reshape(-1,self.n_part,self.n_dim)
                 self.batch.append(batch.cpu())

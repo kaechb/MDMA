@@ -17,8 +17,8 @@ import matplotlib.pyplot as plt
 # from metrics import *
 from models.models import Gen, Disc
 from utils.helpers import get_hists, plotting_point_cloud, mass
-
-
+from time import time
+import pickle
 def response(fake,batch, cond, mask):
     response_real=(fake[:,:,0].sum(1).reshape(-1)/(cond[:,0]+10).exp()).cpu().numpy()
     response_fake=(batch[:,:,0].sum(1).reshape(-1)/(cond[:,0]+10).exp()).cpu().numpy()
@@ -41,7 +41,9 @@ class MDMA(pl.LightningModule):
 
         self.name=self.hparams.dataset
         self._log_dict = {}
-
+        self.times=[]
+        with open("kde/" +"t" + "_kde.pkl", "rb") as f:
+            self.kde=pickle.load(f)
 
 
     def on_validation_epoch_start(self, *args, **kwargs):
@@ -82,8 +84,17 @@ class MDMA(pl.LightningModule):
 
     def sampleandscale(self, batch, mask, cond, scale=False):
         """Samples from the generator and optionally scales the output back to the original scale"""
+        # Since mean field is initialized by sum, we need to set the masked values to zero
         with torch.no_grad():
             z = torch.normal(torch.zeros(batch.shape[0], batch.shape[1], batch.shape[2], device=batch.device), torch.ones(batch.shape[0], batch.shape[1], batch.shape[2], device=batch.device))
+            if self.name=="jet" and scale:
+
+                kde_sample = self.kde.resample(int(len(batch*1.1))).T
+                n_sample = np.rint(kde_sample)
+                n_sample = torch.tensor(n_sample[(n_sample >= 1) & (n_sample <= 150)]).cuda().long()
+                indices = torch.arange(self.hparams.n_part, device="cuda")
+                mask = indices.view(1, -1) < torch.tensor(n_sample).view(-1, 1)
+                mask = ~mask.bool()[: len(z)]
             z[mask] = 0  # Since mean field is initialized by sum, we need to set the masked values to zero
         if  not scale or not self.swa:
             fake = self.gen_net(z, mask=mask.clone(), cond=cond.clone(), weight=False)
@@ -240,7 +251,9 @@ class MDMA(pl.LightningModule):
                 else:
                     cond=cond.reshape(-1,1,1).float()
                 self.w1ps = []
+                start=time()
                 fake = self.sampleandscale(batch=batch, mask=mask, cond=cond, scale=True)
+                self.times.append(start-time())
                 assert (fake==fake).all()
                 self.batch.append(batch.cpu())
                 self.fake.append(fake.cpu())

@@ -30,7 +30,7 @@ from models.flowmodels import Flow,Shape, TDisc
 
 from utils.helpers import plotting_point_cloud,mass, get_hists
 import matplotlib.pyplot as plt
-
+from time import time
 
 class PNF(pl.LightningModule):
 
@@ -47,12 +47,12 @@ class PNF(pl.LightningModule):
         self.flow=Flow(**config).flow.cuda()
         if hparams["context_features"]>0:
             self.shape=Shape(**hparams).cuda()
-            if hparams["adversarial"]:
-                self.automatic_optimization=False
-                self.dis_net=TDisc(**hparams).cuda()
+        if hparams["adversarial"]:
+            self.automatic_optimization=False
+            self.dis_net=TDisc(**hparams).cuda()
         self.counter=0
         self.name=hparams["name"]
-
+        self.times=[]
         self.n_part=self.hparams.n_part
         #This is the Normalizing flow model to be used later, it uses as many
         #coupling_layers as given in the config
@@ -220,8 +220,9 @@ class PNF(pl.LightningModule):
                 self.log("val_logprob",logprob, logger=True)
 
                 self.w1ps = []
+                start=time()
                 fake,mf = self.sampleandscale(batch=batch, mask=mask, cond=cond, scale=True)
-
+                self.times.append(time()-start)
                 batch=scaled_batch.reshape(-1,self.n_part,self.n_dim)
                 fake=fake.reshape(-1,self.n_part,self.n_dim)
                 self.batch.append(batch.cpu())

@@ -34,7 +34,7 @@ from tqdm import tqdm
 if len(sys.argv)>1:
     NAME=sys.argv[1]
 else:
-    NAME="jet_pnf"
+    NAME="jet_tnf"
 def fixmepls1(model):
     for module in model.modules():
         for _, hook in module._forward_pre_hooks.items():

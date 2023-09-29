@@ -42,6 +42,156 @@ from torch.nn.utils import spectral_norm, weight_norm
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 from tqdm import tqdm
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+class plotting_thesis():
+    '''This is a class that takes care of  plotting steps in the script,
+        It is initialized with the following arguments:
+        true=the simulated data, note that it needs to be scaled
+        gen= Generated data , needs to be scaled
+        step=The current step of the training, this is need for tensorboard
+        model=the model that is trained, a bit of an overkill as it is only used to access the losses
+        config=the config used for training
+        logger=The logger used for tensorboard logging'''
+    def __init__(self,step=None,logger=None,weight=1):
+
+        self.step=step
+        self.weight=weight
+        self.fig_size1=[6.4, 6.4]
+        self.fig_size2=[2*6.4, 6.4]
+        self.fig_size3=[3*6.4, 6.4]
+        self.fig_size4=[4*6.4, 6.4]
+        self.alpha=0.3
+        mpl.rcParams['lines.linewidth'] = 2
+        font = { "size": 18}#"family": "normal",
+        mpl.rc("font", **font)
+        mpl.rc('lines', linewidth=2)
+        sns.set_palette("Pastel1")
+        if logger is not None:
+            self.summary=logger
+        else:
+            self.summary = None
+    def plot_ratio(self,h_real,h_fake,weighted,leg=-1,model_name=""):
+        i = 0
+        k = 0
+        fig, ax = plt.subplots(2, 4, gridspec_kw={"height_ratios": [4, 1]}, figsize=self.fig_size4)
+        # plt.suptitle("All Particles", fontsize=18)
+        for v, name in zip(["eta", "phi", "pt", "m"], [r"relative pseudorapidity $\eta^{\tt rel}$", r"relative phi $\phi^{\tt rel}$", r"relative transverse momentum $p_T^{\tt rel}$", r"relative invariant jet mass $m^{\tt rel}$"]):
+            main_ax_artists, sublot_ax_arists = h_fake[k].plot_ratio(
+            h_real[k],
+            ax_dict={"main_ax":ax[0,k],"ratio_ax":ax[1,k]},
+            rp_ylabel=r"Ratio",
+            bar_="blue",
+            rp_num_label="Generated",
+            rp_denom_label="Ground Truth",
+            rp_uncert_draw_type="line",  # line or bar)
+            )
+            i += 1
+            ax[0, k].set_xlabel("")
+            ax[0, k].patches[1].set_fill(True)
+            ax[0, k].ticklabel_format(axis="y", style="scientific", scilimits=(-3, 3), useMathText=True)
+            ax[0, k].patches[1].set_fc(sns.color_palette()[1])
+            ax[0, k].patches[1].set_edgecolor("black")
+            ax[0, k].patches[1].set_linewidth(2)
+            ax[0, k].patches[1].set_alpha(self.alpha)
+            ax[1, k].set_xlabel(name)
+            ax[0, k].set_ylabel("Counts")
+            ax[1, k].set_ylabel("Ratio")
+            ax[0, k].patches[0].set_lw(2)
+            ax[0, k].get_legend().remove()
+            ax[1,k].set_ylim(0.8,1.2)
+            k += 1
+
+
+        ax[0, leg].legend(loc="best", fontsize=18)
+        handles, labels = ax[0, leg].get_legend_handles_labels()
+        ax[0, -1].locator_params(nbins=4, axis="x")
+        ax[1, -1].locator_params(nbins=4, axis="x")
+        handles[1] = mpatches.Patch(color=sns.color_palette()[1], label="The red data")
+        ax[0, leg].legend(handles, labels)
+        plt.suptitle("Agreement between Ground Truth and Generated Data", fontsize=28, fontweight="bold")
+        plt.tight_layout(pad=0.3)
+
+        # if not save==None:
+        plt.savefig("plots/{}_jetnet.pdf".format(model_name),format="pdf")
+        plt.show()
+        plt.close()
+
+    def plot_corr(self,real,fake,model,leg=-1):
+        # Sample data: batch_size of 100, 30 particles, 3 features each
+
+
+        def compute_correlation_matrix(tensor):
+     # Sum over the angular and radial layers
+
+
+            # Compute the correlation matrix across the batch dimension
+            correlation_matrix = np.corrcoef(tensor, rowvar=False)
+
+            return correlation_matrix
+        diffs=[]
+        for name,data in zip(["Ground Truth","Generated"],[real,fake]):
+            # Compute correlation for each batch and then average
+            correlations = []
+            sorted_data, indices = torch.sort(data[:,:,2], dim=1, descending=True)
+
+            # Use the indices to reorder the data
+            data = torch.gather(data, 1, indices.unsqueeze(-1).expand(-1, -1, 3)).numpy()
+            for feature_idx in range(3):
+                correlation_matrix = compute_correlation_matrix(data[:, :, feature_idx])
+
+                correlations.append(correlation_matrix)
+                diffs.append(correlation_matrix)
+            # Convert tensors to numpy arrays for plotting
+            # Plot heatmaps
+            fig, axes = plt.subplots(1, 3, figsize=self.fig_size3)
+            fig.suptitle("Correlations between Particles for {} Data".format(name), fontsize=28, fontweight="bold")
+            sns.heatmap(correlations[0], ax=axes[0], cmap='coolwarm', cbar=False,vmin=-1,vmax=1)
+            axes[0].set_title(r'$\eta^{rel}$')
+
+            sns.heatmap(correlations[1], ax=axes[1], cmap='coolwarm', cbar=False,vmin=-1,vmax=1)
+            axes[1].set_title(r'$\phi^{rel}$')
+
+            cax3=sns.heatmap(correlations[2], ax=axes[2], cmap='coolwarm',cbar=False,vmin=-1,vmax=1
+                             )
+            axes[2].set_title(r'$p_T^{rel}$')
+            for ax in axes:
+                ax.set_xticks([])
+                ax.set_yticks([])
+                ax.set_xlabel("Particles")
+                ax.set_ylabel("Particles")
+            cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+            fig.colorbar(cax3.collections[0], cax=cbar_ax)
+            plt.tight_layout(rect=[0, 0, 0.9, 1])
+            if name=="Ground Truth":
+                plt.savefig("plots/corrGroundTruth.pdf",format="pdf")
+            else:
+                plt.savefig("plots/corr"+model+".pdf",format="pdf")
+            plt.show()
+        diff=[diffs[0]-diffs[3],diffs[1]-diffs[4],diffs[2]-diffs[5]]
+
+        fig, axes = plt.subplots(1, 3, figsize=self.fig_size3)
+        fig.suptitle(r"$\Delta$Ground Truth - Generated Data Correlations between Particles", fontsize=28, fontweight="bold")
+        sns.heatmap(diff[0], ax=axes[0], cmap='coolwarm', cbar=False,vmin=-.1,vmax=.1)
+        axes[0].set_title(r'$\eta^{rel}$')
+
+        sns.heatmap(diff[1], ax=axes[1], cmap='coolwarm', cbar=False,vmin=-.1,vmax=.1)
+        axes[1].set_title(r'$\phi^{rel}$')
+
+        cax3=sns.heatmap(diff[2], ax=axes[2], cmap='coolwarm',cbar=False,vmin=-.1,vmax=.1)
+        axes[2].set_title(r'$p_T^{rel}$')
+        for ax in axes:
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_xlabel("Particles")
+            ax.set_ylabel("Particles")
+        cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+        fig.colorbar(cax3.collections[0], cax=cbar_ax)
+        plt.tight_layout(rect=[0, 0, 0.9, 1])
+        plt.savefig("plots/diff_"+model+name+".pdf",format="pdf")
+        plt.show()
 
 
 def mass(p, canonical=False):
