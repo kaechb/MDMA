@@ -87,7 +87,9 @@ class JetNetDataloader(pl.LightningDataModule):
         temp[masks.reshape(-1)==0]=self.scaler.fit_transform(temp[masks.reshape(-1)==0,:])
         self.data[:,:,:-1]=temp.reshape(-1,self.n_part,self.n_dim)
         self.data[:,:,-1]=masks
+        self.n_mean = 150-torch.mean(self.n)
         self.min_pt = torch.min(self.data[~masks][:,2])
+        self.max_pt = torch.max(self.data[~masks][:,2])
         self.test_set = self.data[-len(test_set):].float()
         self.data = self.data[:-len(test_set)].float()
 

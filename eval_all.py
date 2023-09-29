@@ -13,7 +13,7 @@ from plots import mass
 name = "best" if len(sys.argv) == 1 else sys.argv[1]
 import numpy as np
 import pandas as pd
-from jetnet.evaluation import fpd, get_fpd_kpd_jet_features, kpd, w1efp, w1m, w1p
+from jetnet.evaluation import fpd, get_fpd_kpd_jet_features, kpd, w1efp, w1m, w1p,fpnd
 from scipy.stats import wasserstein_distance
 
 results_df = pd.DataFrame()
@@ -26,8 +26,9 @@ n = 20  # determines oversampling factor
 
 
 for parton in [
-    "q",
+
     "t",
+     "q",
     "z",
     "w",
     "g",
@@ -112,10 +113,8 @@ for parton in [
             w_dist_list.append(w_dist_ms)
         w1m_2 = np.mean(np.array(w_dist_list))
         w1m_2std = np.std(np.array(w_dist_list))
-
         w1efp_ = w1efp(fake_scaled[: len(true)], true[:, :, :3], num_eval_samples=len(true), efp_jobs=20)
         w1p_ = w1p(fake_scaled, true[:, :, :3], num_eval_samples=len(true))
-
         config = {"name": [parton], "model": [name], "w1m": [w1m_], "w1p": [w1p_], "w1efp": [w1efp_], "ngen": [n_gen], "ndis": [n_dis], "w1m_2": [(w1m_2, w1m_2std)], "kpd": [kpd_], "fpd": [fpd_]}
         print(config)
         results_df = pd.concat([results_df, pd.DataFrame(config)], ignore_index=True)

@@ -59,6 +59,10 @@ class MDMA(pl.LightningModule):
     def load_datamodule(self, data_module):
         """needed for lightning training to work, it just sets the dataloader for training and validation"""
         self.data_module = data_module
+        #self.data_module.setup("train")
+        self.min_pt=self.data_module.min_pt.item()
+        self.max_pt=self.data_module.max_pt.item()
+
 
 
     def sampleandscale(self, batch, mask=None, scale=False):
@@ -73,6 +77,8 @@ class MDMA(pl.LightningModule):
                 z = torch.normal(torch.zeros(batch.shape[0], batch.shape[1], batch.shape[2], device=batch.device), torch.ones(batch.shape[0], batch.shape[1], batch.shape[2], device=batch.device))
         z[mask] = 0 #mean field is initialized by sum, so we need to set the masked values to zero
         fake = self.gen_net(z, mask=mask, weight=False)
+        fake[:,:,2]=self.relu(fake[:,:,2]-self.min_pt)+self.min_pt
+        fake[:,:,2]=-self.relu(-fake[:,:,2]+self.max_pt)+self.max_pt
         fake[mask] = 0
         if scale:
             self.data_module.scaler = self.data_module.scaler.to(batch.device)
@@ -188,7 +194,6 @@ class MDMA(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         """This calculates some important metrics on the hold out set (checking for overtraining)"""
         with torch.no_grad():
-            batch = batch
             mask = batch[:, : self.n_part, -1].bool()
             batch = batch[:, : self.n_part, : self.n_dim]
             gen, fake_scaled, true_scaled = self.sampleandscale(batch, mask, scale=True)
@@ -220,7 +225,7 @@ class MDMA(pl.LightningModule):
             if w1m_ < self.w1m_best:  # only log images if w1m is better than before because it takes a lot of time
                 self.w1m_best = w1m_
                 self.log("best_w1m", w1m_, on_step=False, prog_bar=False, logger=True, on_epoch=True)
-                self.plot = plotting_point_cloud(model=self, gen=fake_scaled[: len(true_scaled)], true=true_scaled, n_dim=self.n_dim, n_part=self.n_part, step=self.global_step, logger=None, n=self.n_part, p=self.parton)
+                self.plot = plotting_point_cloud(model=self, gen=fake_scaled[: len(true_scaled)], true=true_scaled, n_dim=self.n_dim, n_part=self.n_part, step=self.global_step, logger=self.logger, n=self.n_part, p=self.parton)
                 try:
                     self.plot.plot_scores(scores_real.reshape(-1), scores_fake.reshape(-1), False, self.global_step)
                     self.plot.plot_mass(save=None, bins=50)

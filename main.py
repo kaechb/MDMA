@@ -26,16 +26,27 @@ def train(config):
     # hyperopt:whether to optimizer hyper parameters - ckpt: path to checkpoint if used
     # Callbacks to use during the training, we  checkpoint our models
 
-    model = MDMA(config=config, **config)
-    model.ckpt = None
+    logger = WandbLogger(
+        save_dir="/beegfs/desy/user/kaechben/MF2",
+        sync_tensorboard=False,
+        project="MF2",
+    )
+    #best function that exists in ml
+    logger.experiment.log_code(".")
+    # update config with hyperparameters from sweep
+    if len(logger.experiment.config.keys()) > 0:
+        config.update(**logger.experiment.config)
     data_module = JetNetDataloader(config)
     data_module.setup("validation")
-    model.data_module = data_module
+    config["n_mean"] = data_module.n_mean
+    model = MDMA( **config)
+    model.ckpt = None
+    model.load_datamodule(data_module)
     callbacks = [ModelCheckpoint(monitor="w1m", save_top_k=3, mode="min", filename="{epoch}-{w1m:.5f}-{fpd:.7f}", every_n_epochs=1), pl.callbacks.LearningRateMonitor(logging_interval="step")]
     trainer = pl.Trainer(
         devices=1,
         accelerator="gpu",
-        logger=None,
+        logger=logger,
         log_every_n_steps=100,
         max_epochs=3000,
         callbacks=callbacks,
@@ -76,7 +87,7 @@ if __name__ == "__main__":
         "num_layers_gen": 7,
         "num_layers": 2,
         "opt": "AdamW",
-        "parton": "q",
+        "parton": "t",
         "stop_mean": True,
     }
     train(config)  # load_ckpt=ckptroot=root,
