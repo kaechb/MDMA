@@ -1,7 +1,8 @@
-"batch_size": 10000
-"ckpt": "/gpfs/dust/maxwell/user/kaechben/calochallenge/MDMA_jet_nf/rw4gv5mo/checkpoints/epoch=2041-w1m=0.00168-fpd=10.00000.ckpt"
-"dropout": 0.1
+"batch_size": 1024
+#"ckpt": "/gpfs/dust/maxwell/user/kaechben/calochallenge/MDMA_jet_nf/rw4gv5mo/checkpoints/epoch=2041-w1m=0.00168-fpd=10.00000.ckpt"
+"dropout": 0.0
 "dataset": "jet"
+"gan": "lsgan"
 "hidden_gen": 128
 "hidden": 64
 "lambda_m": 0.1
@@ -15,11 +16,11 @@
 "model": "NF"
 "name": "jet_nf"
 "num_layers": 2
-"opt": "Adam"
-"weightdecay": 0.0
+"opt": "AdamW"
+"weightdecay": 0.01
 "parton": "t"
 "n_dim": 3
-"n_part": 30
+"n_part": 7
 "N": 1
 "cond_dim" : 1
 "bins":
@@ -28,7 +29,7 @@
   - 100
   - 100
 "pretrain": false
-"sampler": true
+"sampler": false
 "start_swa": false
 "amp": false
 "coupling_layers": 18
@@ -39,5 +40,5 @@
 "tail_bound": 7
 "num_bins": 6
 "batchnorm": true
-"context_features": 1
+"context_features": 0
 "dropout": 0

@@ -15,7 +15,7 @@ from utils.helpers import CosineWarmupScheduler
 rng = np.random.default_rng()
 import matplotlib.pyplot as plt
 # from metrics import *
-from models.models import Gen, Disc
+from models.model import Gen, Disc
 from utils.helpers import get_hists, plotting_point_cloud, mass
 from time import time
 import pickle

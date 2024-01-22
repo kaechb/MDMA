@@ -1,6 +1,7 @@
 "batch_size": 128
-"ckpt_flow": "/gpfs/dust/maxwell/user/kaechben/thesis/jetnet30/t_flow.ckpt"
+"ckpt_flow": "../ckpts/t_nflow.ckpt"
 "ckpt": ""
+"fast": true
 "dropout": 0.0
 "dataset": "jet"
 "heads_gen": 16
@@ -19,15 +20,15 @@
 "gp": false
 "freq": 1
 "name": "jet_tnf"
-"num_layers_gen": 7
-"opt": "Adam"
-"weightdecay": 0.0
+"num_layers_gen": 4
+"opt": "AdamW"
+"weightdecay": 0.01
 "parton": "t"
 "n_dim": 3
 "n_part": 30
 "N": 1
 "noise": false
-"cond_dim" : 1
+"cond_dim" : 0
 "bins":
   - 100
   - 100
@@ -45,5 +46,5 @@
 "tail_bound": 6
 "num_bins": 8
 "batchnorm": false
-"context_features": 1
+"context_features": 0
 "dropout": 0

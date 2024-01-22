@@ -178,6 +178,24 @@ class TGen(nn.Module):
                 x = self.out2(x)
         return x
 
+class FastTransformerEncoderLayer(nn.Module):
+    def __init__(self,d_model, nhead, dim_feedforward=2048, dropout=0.1, activation="leaky_relu"):
+        super().__init__()
+        # Implementation of Feedforward model
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.activation = activation
+    def sa_block(self,x,mask=None):
+        return torch.nn.functional.scaled_dot_product_attention(x,x,x,mask=mask)
+    def ff_block(self,x):
+        return self.linear2(self.dropout(F.leaky_relu(self.linear1(x))))
+    def forward(self, x, mask=None):
+        x=self.norm1(x+self.sa_block(x,mask))
+        x=self.norm2(x+self.ff_block(x))
+
 
 class TDisc(nn.Module):
     def __init__(
@@ -192,6 +210,7 @@ class TDisc(nn.Module):
         dropout=0.5,
         mass=False,
         clf=False,
+        fast=False,
         **kwargs
     ):
         super().__init__()
@@ -212,7 +231,8 @@ class TDisc(nn.Module):
             self.flat_out = nn.Linear(hidden, 1)
         else:
             self.embbed = nn.Linear(n_dim, l_dim)
-            self.encoder = nn.TransformerEncoder(
+            if not fast:
+                self.encoder = nn.TransformerEncoder(
                 nn.TransformerEncoderLayer(
                     d_model=self.l_dim,
                     nhead=num_heads,
@@ -224,6 +244,9 @@ class TDisc(nn.Module):
                 ),
                 num_layers=num_layers,
             )
+            else:
+                self.encoder=nn.Sequential(*[FastTransformerEncoderLayer(self.l_dim,num_heads,hidden,dropout) for i in range(num_layers)])
+                
             self.hidden = nn.Linear(l_dim + int(mass), 2 * hidden)
             self.hidden2 = nn.Linear(2 * hidden, hidden)
             self.out = nn.Linear(hidden, 1)

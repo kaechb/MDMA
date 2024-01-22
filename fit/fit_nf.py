@@ -39,13 +39,13 @@ class NF(pl.LightningModule):
 
         '''This initializes the model and its hyperparameters'''
         super().__init__()
+        self.save_hyperparameters()
 
         self.logprobs=[]
-        self.save_hyperparameters()
         self.flow=Flow(**hparams).flow
         self.counter=0
         self.name=hparams["name"]
-
+        self.eval_metrics=True
         self.n_part=self.hparams.n_part
         self.times=[]
         #This is the Normalizing flow model to be used later, it uses as many
@@ -100,35 +100,31 @@ class NF(pl.LightningModule):
 
                 if self.hparams.context_features>0:
                     fake=self.flow.sample(1,cond)
+                    
                 else:
                     fake=self.flow.sample(len(batch))
             except:
+                traceback.print_exc()
                 pass
-        #This make sure that everything is on the right device
-        #Not here that this sample is conditioned on the mass of the current batch allowing the MSE
-        #to be calculated later on
         fake=fake.reshape(-1,3)
         fake[fake[:,2].abs()<1e-4]=0
         fake=fake.reshape(-1,self.n_part*self.n_dim)
         if scale:
             fake=self.scaler.inverse_transform(fake[:,:self.n_dim*self.n_part].reshape(-1,self.n_part,self.n_dim))
             fake[mask]=0
+            fake=fake.clamp(self.scaled_mins[:-1],self.scaled_maxs[:-1])
         if self.hparams.mass_loss:
             m_f=mass(self.scaler.inverse_transform(fake.reshape(-1,self.n_part,self.n_dim))).reshape(-1)
+            m_f=m_f.clamp(self.scaled_mins[-1],self.scaled_maxs[-1])
         else:
             m_f=None
+
         return fake,m_f
 
     def configure_optimizers(self):
 
         opt_g = torch.optim.AdamW(self.flow.parameters(), lr=self.hparams.lr)
-        # self.opt_g=opt_g
-        # if self.lr_schedule=="onecycle":
-        #     scheduler = OneCycleLR(self.opt_g,max_lr=0.01,total_steps=self.max_steps)
-        # elif self.lr_schedule=="exp":
-        #     scheduler = ExponentialLR(self.opt_g,gamma=0.99)
-        # elif self.lr_schedule=="smart":
-            # scheduler = OneCycleLR(self.opt_g,"min")
+
         return opt_g#({'optimizer': opt_g, 'frequency': 1, 'scheduler':None if not self.lr_schedule else scheduler})
 
 
@@ -142,7 +138,6 @@ class NF(pl.LightningModule):
         batch=batch.reshape(-1,self.n_dim*self.n_part)
 
         if self.hparams.context_features==1:
-
             cond=mass(self.scaler.inverse_transform(batch.reshape(-1,self.n_part,self.n_dim))).reshape(-1,1)#
         elif self.hparams.context_features==0:
             cond=None
@@ -166,6 +161,7 @@ class NF(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         '''This calculates some important metrics on the hold out set (checking for overtraining)'''
+
         with torch.no_grad():
 
             if batch[0].shape[1]>0:
@@ -192,13 +188,12 @@ class NF(pl.LightningModule):
                 for i in range(self.n_dim):
                     self.hists_real[i].fill(batch[~mask][:, i].cpu().numpy())
                     self.hists_fake[i].fill(fake[~mask][:, i].cpu().numpy())
-
                 self.hists_real[-1].fill(mass(batch).cpu().numpy())
                 self.hists_fake[-1].fill(mass(fake[:len(batch)]).cpu().numpy())
 
-
     def on_validation_epoch_end(self):
-        self.jetnet_evaluation()
+        if self.eval_metrics:
+            self.jetnet_evaluation()
 
     def jetnet_evaluation(self):
         real = torch.cat([torch.nn.functional.pad(batch, (0, 0, 0, self.hparams.n_part - batch.size(1))) for batch in self.batch],dim=0) if self.hparams.max else torch.cat(self.batch)

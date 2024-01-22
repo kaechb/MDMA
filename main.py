@@ -15,8 +15,9 @@ from fit.fit import MDMA
 from fit.fit_nf import NF
 from fit.fit_tnf import TNF
 from fit.fit_pnf import PNF
+from fit.fit_jet_fm import FM
 from utils.helpers import *
-from models.models import Disc, Gen
+from models.model import Disc, Gen
 from preprocess_new import Cart, DQLinear, LogitTransformer, ScalerBaseNew
 from preprocess_new import SqrtTransformer
 from preprocess_new import SqrtTransformer as LogTransformer
@@ -24,17 +25,18 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import (CometLogger, TensorBoardLogger,
                                        WandbLogger)
+from pytorch_lightning.callbacks import StochasticWeightAveraging, LearningRateMonitor
 from pytorch_lightning.tuner.tuning import Tuner
 from scipy import stats
 from torch.nn import functional as FF
 from torch.nn.utils.weight_norm import WeightNorm
 from torch.optim.swa_utils import SWALR, AveragedModel
 from tqdm import tqdm
-
+from callbacks import EMA
 if len(sys.argv)>1:
     NAME=sys.argv[1]
 else:
-    NAME="jet_tnf"
+    NAME="jet_fm"
 def fixmepls1(model):
     for module in model.modules():
         for _, hook in module._forward_pre_hooks.items():
@@ -49,6 +51,15 @@ def fixmepls2(model):
 def lcm(a, b):
     return (a * b) // math.gcd(a, b)
 
+def setup_state_dict(state_dict):
+    new_state_dict = {}
+    for k, v in state_dict.items():
+    # Adjust the keys here
+        new_k=k.replace("net.","").replace("loss.","").replace("flows.0.","")
+        if k.find("frequencies")<0 and k.find("dummy")<0:
+            new_state_dict[new_k] = v
+    return new_state_dict
+
 def setup_model(config, data_module=None, model=False):
     """
     Set up the model object based on the provided configuration and data module.
@@ -62,13 +73,15 @@ def setup_model(config, data_module=None, model=False):
         object: The configured model object.
     """
     if not model and config["model"]=="MDMA":
-            model = MDMA(**config)
+         model = MDMA(**config)
     elif not model and config["model"]=="NF":
         model = NF(**config)
     elif not model and config["model"]=="TNF":
         model = TNF(**config)
     elif not model and config["model"]=="PNF":
         model = PNF(**config)
+    elif not model and config["model"]=="FM":
+            model = FM(**config)
 
     if config["model"]!="NF":
             model.loss = losses.hinge if config["gan"] == "hinge" else losses.wasserstein if config["gan"] == "wgan" else losses.least_squares
@@ -126,17 +139,25 @@ def train(config, logger,data_module,trainer,ckpt=False):
     # Callbacks to use during the training, we  checkpoint our models
     print("This is run: ", logger.experiment.name)
     print("config:", config)
+    torch.set_float32_matmul_precision("medium")
     swa=config["start_swa"]
     if not ckpt:
         model = setup_model(config,data_module,model=False)
 
 
     else:
+
         state_dict=torch.load(ckpt,map_location="cuda")
         config.update(**state_dict["hyper_parameters"])
         config["swa"]=swa
         if config["model"]=="MDMA":
             model=MDMA(**config).load_from_checkpoint(ckpt,**config,strict=True)
+        elif config["model"]=="FM":
+            # state_dict=setup_state_dict(state_dict["state_dict"])
+            config["swa"]=False
+            model=FM(**config).load_from_checkpoint(ckpt,**config,strict=False)
+
+         #   model.net.load_state_dict(state_dict)
         elif config["model"]=="NF":
             model=NF(**config).load_from_checkpoint(ckpt,**config,strict=True)
         elif config["model"]=="TNF":
@@ -166,16 +187,14 @@ def train(config, logger,data_module,trainer,ckpt=False):
     if config["model"]=="MDMA":
         model.gen_net.avg_n=torch.cat(n,dim=0).float().cuda().mean()
         model.dis_net.avg_n=torch.cat(n,dim=0).float().cuda().mean()
-        if model.swa:
+    if model.swa:
             model.gen_net_averaged._modules["module"].avg_n=model.gen_net.avg_n
-    if ckpt :
-        trainer.fit(model,datamodule=data_module,ckpt_path=ckpt)
-    else:
-        trainer.fit(model,datamodule=data_module,)
+
+    trainer.fit(model,datamodule=data_module,ckpt_path=ckpt)
 
 if __name__ == "__main__":
 
-
+    print(NAME)
     config=yaml.load(open("hparams/default_{}.yaml".format(NAME)),Loader=yaml.FullLoader)
     #set up WandB logger
     logger = WandbLogger(
@@ -185,31 +204,36 @@ if __name__ == "__main__":
     # update config with hyperparameters from sweep
     logger.experiment.log_code(".")
     if len(logger.experiment.config.keys()) > 0:
-        ckpt=None
         config.update(**logger.experiment.config)
+    ckpt=config["ckpt"] if "ckpt" in config.keys() else False
+
     if config["dataset"]=="calo":
         from utils.dataloader_calo import PointCloudDataloader
     else:
         from utils.dataloader_jetnet import PointCloudDataloader
-    ckpt=config["ckpt"]
+
     data_module = PointCloudDataloader(**config)
     data_module.setup("train")
     if config["dataset"]=="jet":
         callbacks =[ModelCheckpoint(monitor="w1m", save_top_k=2, mode="min",filename="{epoch}-{w1m:.5f}-{fpd:.5f}",every_n_epochs=1,),pl.callbacks.LearningRateMonitor(logging_interval="step"),ModelCheckpoint(monitor="fpd", save_top_k=2, mode="min",filename="{epoch}-{w1m:.5f}-{fpd:.5f}",every_n_epochs=1,),pl.callbacks.LearningRateMonitor(logging_interval="step")]
     else:
         callbacks =[ModelCheckpoint(monitor="w1p", save_top_k=2, mode="min",filename="{epoch}-{w1p:.5f}-{weighted_w1p:.5f}",every_n_epochs=1,)]
+    if "swa" in config.keys() and config["swa"]:
+        callbacks.append(StochasticWeightAveraging(swa_lrs=1e-2,swa_epoch_start=0.4))
+    if False:
+        callbacks.append(EMA(decay=0.9999))
     trainer = pl.Trainer(
         devices=1,
-        precision=16 if config["amp"] else 32,
+
         accelerator="gpu",
         logger=logger,
         log_every_n_steps=100,
-        max_epochs=20000,
+        max_epochs=config["max_epochs"],
         callbacks=callbacks,
-        val_check_interval=100 if ckpt and config["start_swa"] else 2000 if config["model"]=="NF" else 10000,
+        val_check_interval=1000,
         check_val_every_n_epoch=None,
-        num_sanity_val_steps=2,
+        num_sanity_val_steps=1,
         enable_progress_bar=False,
         default_root_dir="/gpfs/dust/maxwell/user/{}/{}".format(os.environ["USER"],config["dataset"]),
     )
-    train(config,logger=logger,data_module=data_module,trainer=trainer,ckpt=ckpt)
+    train(config,logger=logger,data_module=data_module,trainer=trainer,ckpt=ckpt )

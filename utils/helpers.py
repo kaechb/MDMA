@@ -422,7 +422,7 @@ class plotting_point_cloud():
         self.summary.log_image("{}ratio".format("weighted " if weighted else "unweighted "), [fig],self.step)
         plt.close()
 
-    def plot_jet(self, h_real, h_fake, leg=-1):
+    def plot_jet(self, h_real, h_fake, leg=-1,ema=False):
         # This creates a histogram of the inclusive distributions and calculates the mass of each jet
         # and creates a histogram of that
         # if save, the histograms are logged to tensorboard otherwise they are shown
@@ -468,7 +468,7 @@ class plotting_point_cloud():
         #     plt.savefig(save+".pdf",format="pdf")
         plt.tight_layout()
         try:
-            self.summary.log_image("inclusive", [fig], self.step)
+            self.summary.log_image("inclusive_ema" if ema else "inclusive", [fig], self.step)
             plt.close()
         except:
             plt.show()
@@ -518,20 +518,21 @@ class plotting_point_cloud():
             plt.savefig("plots/response.pdf",format="pdf")
             plt.show()
 
-def get_hists(bins,mins,maxs,calo=False):
+def get_hists(bins,mins,maxs,calo=False,ema=False):
     hists={}
     hists["hists_real"] = []
     hists["hists_fake"] = []
-
+    if ema:
+        hists["hists_fake_ema"] = []
 
     if calo:
         hists["weighted_hists_real"] = []
         hists["weighted_hists_fake"] = []
-        hists["response_real"]=hist.Hist(hist.axis.Regular(100, 0.6, 1.1))
-        hists["response_fake"]=hist.Hist(hist.axis.Regular(100, 0.6, 1.1))
+        hists["response_real"]=hist.Hist(hist.axis.Regular(bins, 0.6, 1.1))
+        hists["response_fake"]=hist.Hist(hist.axis.Regular(bins, 0.6, 1.1))
 
-        hists["hists_real"].append(hist.Hist(hist.axis.Regular(100, 0, 6500)))
-        hists["hists_fake"].append(hist.Hist(hist.axis.Regular(100, 0, 6500)))
+        hists["hists_real"].append(hist.Hist(hist.axis.Regular(bins, 0, 6500)))
+        hists["hists_fake"].append(hist.Hist(hist.axis.Regular(bins, 0, 6500)))
 
         for n in bins[1:]:
             hists["hists_real"].append(hist.Hist(hist.axis.Integer(0, n)))
@@ -541,8 +542,12 @@ def get_hists(bins,mins,maxs,calo=False):
             hists["weighted_hists_fake"].append(hist.Hist(hist.axis.Integer(0, n)))
     else:
             for n,mi,ma in zip(bins,mins,maxs):
+                if n==3:
+                    mi=0
                 hists["hists_real"].append(hist.Hist(hist.axis.Regular(n,mi, ma)))
                 hists["hists_fake"].append(hist.Hist(hist.axis.Regular(n,mi, ma)))
+                if ema:
+                    hists["hists_fake_ema"].append(hist.Hist(hist.axis.Regular(n,mi, ma)))
     return hists
 
 

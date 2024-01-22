@@ -103,12 +103,14 @@ class PNF(pl.LightningModule):
         fake=None
         while fake is None:
             try:
-
+                if self.hparams.context_features>=1:
+                    cond=self.shape(batch).repeat_interleave(self.hparams.n_part,dim=0)
                 if self.hparams.context_features>0:
                     fake=self.flow.sample(1,cond)
                 else:
                     fake=self.flow.sample(len(batch)*self.n_part)
             except:
+                traceback.print_exc()
                 pass
 
         #This make sure that everything is on the right device
