@@ -4,61 +4,44 @@ import sys
 import time
 import traceback
 
-import utils.losses as losses
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
-import wandb
 import yaml
-from fit.fit import MDMA
-from fit.fit_nf import NF
-from fit.fit_tnf import TNF
-from fit.fit_pnf import PNF
-from fit.fit_jet_fm import FM
-from utils.helpers import *
-from models.model import Disc, Gen
-from preprocess_new import Cart, DQLinear, LogitTransformer, ScalerBaseNew
-from preprocess_new import SqrtTransformer
-from preprocess_new import SqrtTransformer as LogTransformer
-from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.callbacks import (
+    LearningRateMonitor,
+    ModelCheckpoint,
+    StochasticWeightAveraging,
+)
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
-from pytorch_lightning.loggers import (CometLogger, TensorBoardLogger,
-                                       WandbLogger)
-from pytorch_lightning.callbacks import StochasticWeightAveraging, LearningRateMonitor
+from pytorch_lightning.loggers import CometLogger, TensorBoardLogger, WandbLogger
 from pytorch_lightning.tuner.tuning import Tuner
 from scipy import stats
 from torch.nn import functional as FF
 from torch.nn.utils.weight_norm import WeightNorm
-from torch.optim.swa_utils import SWALR, AveragedModel
 from tqdm import tqdm
-from callbacks import EMA
-if len(sys.argv)>1:
-    NAME=sys.argv[1]
+
+import utils.losses as losses
+import wandb
+from callbacks import EMA, EMAModelCheckpoint
+from fit.fit import MDMA
+from fit.fit_jet_fm import FM
+from fit.fit_nf import NF
+from fit.fit_pnf import PNF
+from fit.fit_tf import TF
+from fit.fit_tnf import TNF
+from models.model import Disc, Gen
+from preprocess_new import DQ, Cart, DQLinear, LogitTransformer, ScalerBaseNew
+from preprocess_new import SqrtTransformer
+from preprocess_new import SqrtTransformer as LogTransformer
+from utils.helpers import *
+
+if len(sys.argv) > 1:
+    NAME = sys.argv[1]
 else:
-    NAME="jet_fm"
-def fixmepls1(model):
-    for module in model.modules():
-        for _, hook in module._forward_pre_hooks.items():
-            if isinstance(hook, WeightNorm):
-                delattr(module, hook.name)
-def fixmepls2(model):
-    for module in model.modules():
-        for _, hook in module._forward_pre_hooks.items():
-            if isinstance(hook, WeightNorm):
-                hook(module, None)
+    NAME = "calo"
 
-def lcm(a, b):
-    return (a * b) // math.gcd(a, b)
-
-def setup_state_dict(state_dict):
-    new_state_dict = {}
-    for k, v in state_dict.items():
-    # Adjust the keys here
-        new_k=k.replace("net.","").replace("loss.","").replace("flows.0.","")
-        if k.find("frequencies")<0 and k.find("dummy")<0:
-            new_state_dict[new_k] = v
-    return new_state_dict
 
 def setup_model(config, data_module=None, model=False):
     """
@@ -72,27 +55,39 @@ def setup_model(config, data_module=None, model=False):
     Returns:
         object: The configured model object.
     """
-    if not model and config["model"]=="MDMA":
-         model = MDMA(**config)
-    elif not model and config["model"]=="NF":
+    config["num_batches"] = data_module.num_batches
+
+    if not model and config["model"] == "MDMA":
+        model = MDMA(**config)
+    elif not model and config["model"] == "NF":
         model = NF(**config)
-    elif not model and config["model"]=="TNF":
+    elif not model and config["model"] == "TNF":
         model = TNF(**config)
-    elif not model and config["model"]=="PNF":
+    elif not model and config["model"] == "TF":
+        model = TF(**config)
+    elif not model and config["model"] == "PNF":
         model = PNF(**config)
-    elif not model and config["model"]=="FM":
-            model = FM(**config)
+    elif not model and config["model"] == "FM":
+        model = FM(**config)
+    elif model:
+        pass
+    else:
+        raise ValueError("model not found")
 
-    if config["model"]!="NF":
-            model.loss = losses.hinge if config["gan"] == "hinge" else losses.wasserstein if config["gan"] == "wgan" else losses.least_squares
-            model.gp = config["gp"]
-            model.d_loss_mean = None
-            model.g_loss_mean = None
-
+    if "gan" in config.keys():
+        model.loss = (
+            losses.hinge
+            if config["gan"] == "hinge"
+            else losses.wasserstein if config["gan"] == "wgan" else losses.least_squares
+        )
+        model.gp = config["gp"]
+        model.d_loss_mean = None
+        model.g_loss_mean = None
 
     if config["dataset"] == "calo":
-        model.bins = [600, config["num_z"], config["num_alpha"], config["num_R"]]
-        model.num_z, model.num_alpha, model.num_R = config["num_z"], config["num_alpha"], config["num_R"]
+        model.bins = config["bins"]
+
+        model.num_z, model.num_alpha, model.num_R = model.bins[1:]
         model.E_loss = config["E_loss"]
         model.lambda_gp = config["lambda_gp"]
         model.lambda_response = config["lambda_response"]
@@ -105,19 +100,23 @@ def setup_model(config, data_module=None, model=False):
         model.mean = model.scaler.transfs[0]._scaler.mean_[0]
         model.scale = model.scaler.transfs[0]._scaler.scale_[0]
         model.pos_mean = torch.tensor(model.scaler.transfs[1].steps[2][1].mean_).cuda()
-        model.pos_scale = torch.tensor(model.scaler.transfs[1].steps[2][1].scale_).cuda()
-        model.pos_max_scale = torch.tensor(model.scaler.transfs[1].steps[0][1].scale_).cuda()
+        model.pos_scale = torch.tensor(
+            model.scaler.transfs[1].steps[2][1].scale_
+        ).cuda()
+        model.pos_max_scale = torch.tensor(
+            model.scaler.transfs[1].steps[0][1].scale_
+        ).cuda()
         model.pos_min = torch.tensor(model.scaler.transfs[1].steps[0][1].min_).cuda()
         model.power_lambda = model.scaler.transfs[0].lambdas_[0]
         model.mean = model.scaler.transfs[0]._scaler.mean_[0]
         model.scale = model.scaler.transfs[0]._scaler.scale_[0]
+        model.E_loss_mean = None
     else:
         model.bins = [100, 100, 100]
         model.n_dim = 3
         model.scaler = data_module.scaler
         model.w1m_best = 0.01
-        model.min_pt = data_module.min_pt
-        model.max_pt = data_module.max_pt
+
     model.i = 0
 
     if config["dataset"] == "jet":
@@ -127,10 +126,11 @@ def setup_model(config, data_module=None, model=False):
     else:
         model.scaled_mins = torch.zeros(4).cuda()
         model.scaled_maxs = torch.tensor([1e9] + model.bins[1:]).cuda()
-    model.swa = False
+
     return model
 
-def train(config, logger,data_module,trainer,ckpt=False):
+
+def train(config, logger, data_module, ckpt=False):
     # torch.set_float32_matmul_precision('medium' )
     # This function is a wrapper for the hyperparameter optimization module called ray
     # Its parameters hyperopt and ckpt are there for convenience
@@ -139,101 +139,190 @@ def train(config, logger,data_module,trainer,ckpt=False):
     # Callbacks to use during the training, we  checkpoint our models
     print("This is run: ", logger.experiment.name)
     print("config:", config)
+    # if config["name"] != "FM":
+    # torch.set_float32_matmul_precision("highest")
+    # if config["model"]=="MDMA":
+    #     torch.set_float32_matmul_precision("medium")
     torch.set_float32_matmul_precision("medium")
-    swa=config["start_swa"]
-    if not ckpt:
-        model = setup_model(config,data_module,model=False)
 
+    if not ckpt:
+        model = setup_model(config, data_module, model=False)
 
     else:
 
-        state_dict=torch.load(ckpt,map_location="cuda")
-        config.update(**state_dict["hyper_parameters"])
-        config["swa"]=swa
-        if config["model"]=="MDMA":
-            model=MDMA(**config).load_from_checkpoint(ckpt,**config,strict=True)
-        elif config["model"]=="FM":
+        if config["model"] == "MDMA":
+
+            if config["dataset"] == "jet" and config["n_part"] == 150:
+                model = MDMA.load_from_checkpoint(
+                    ckpt,
+                    n_part=config["n_part"],
+                    batch_size=config["batch_size"],
+                    num_batches=data_module.num_batches,
+                )
+            elif (
+                config["dataset"] == "calo"
+                and "middle" in config.keys()
+                and config["middle"] == False
+            ):
+                print("loaded MDMA")
+                model = MDMA.load_from_checkpoint(
+                    ckpt,bins=config["bins"],strict=True,lr=config["lr"],
+                )
+            else:
+                model = MDMA.load_from_checkpoint(
+                    ckpt, stop_mean=False, E_loss=config["E_loss"]
+                )
+        elif config["model"] == "FM":
+
             # state_dict=setup_state_dict(state_dict["state_dict"])
-            config["swa"]=False
-            model=FM(**config).load_from_checkpoint(ckpt,**config,strict=False)
+            if config["dataset"] == "jet" and config["n_part"] == 150:
+                model = FM.load_from_checkpoint(
+                    ckpt,
+                    strict=False,
+                    n_part=config["n_part"],
+                    exact=config["exact"],
+                    lr=config["lr"],
+                )
+            else:
 
-         #   model.net.load_state_dict(state_dict)
-        elif config["model"]=="NF":
-            model=NF(**config).load_from_checkpoint(ckpt,**config,strict=True)
-        elif config["model"]=="TNF":
-            model=TNF(**config).load_from_checkpoint(ckpt,**config,strict=True)
-        model=setup_model(config,data_module,model)
+                model = FM.load_from_checkpoint(ckpt, bins=config["bins"],lr=config["lr"],)
 
-        if model.swa: # this is a bit of a hack to get the SWA to work when loading it when there is a spectral/weight norm
-            for param in model.parameters():
-                param.data = param.data.detach()
-            fixmepls1(model.gen_net)
-            model.gen_net_averaged = AveragedModel(model.gen_net)
-            fixmepls2(model.gen_net)
-            fixmepls2(model.gen_net_averaged)
+        #   model.net.load_state_dict(state_dict)
+        elif config["model"] == "NF":
+            model = NF(**config).load_from_checkpoint(ckpt, **config)
+        elif config["model"] == "TNF":
+            model = TNF(**config).load_from_checkpoint(ckpt, **config)
+        model = setup_model(config, data_module, model)
 
     model.load_datamodule(data_module)
-    #loop once through dataloader to find mins and maxs to clamp during training
-    mins=torch.ones(config["n_dim"]).unsqueeze(0)
-    maxs=torch.ones(config["n_dim"]).unsqueeze(0)
-    n=[]
-    for i in data_module.train_dataloader():
-        mins=torch.min(torch.cat((mins,i[0][~i[1]].min(0,keepdim=True)[0]),dim=0),dim=0)[0].unsqueeze(0)
-        maxs=torch.max(torch.cat((maxs,i[0][~i[1]].max(0,keepdim=True)[0]),dim=0),dim=0)[0].unsqueeze(0)
-        n.append((~i[1]).sum(1))
-    model.maxs=maxs.cuda()
-    model.mins=mins.cuda()
-    model.avg_n=torch.cat(n,dim=0).float().cuda().mean()
-    if config["model"]=="MDMA":
-        model.gen_net.avg_n=torch.cat(n,dim=0).float().cuda().mean()
-        model.dis_net.avg_n=torch.cat(n,dim=0).float().cuda().mean()
-    if model.swa:
-            model.gen_net_averaged._modules["module"].avg_n=model.gen_net.avg_n
 
-    trainer.fit(model,datamodule=data_module,ckpt_path=ckpt)
+    # loop once through dataloader to find mins and maxs to clamp during training
+    mins = torch.ones(config["n_dim"]).unsqueeze(0)
+    maxs = torch.ones(config["n_dim"]).unsqueeze(0)
+    n = []
+    for i in data_module.train_dataloader():
+        mins = torch.min(
+            torch.cat((mins, i[0][~i[1]].min(0, keepdim=True)[0]), dim=0), dim=0
+        )[0].unsqueeze(0)
+        maxs = torch.max(
+            torch.cat((maxs, i[0][~i[1]].max(0, keepdim=True)[0]), dim=0), dim=0
+        )[0].unsqueeze(0)
+        n.append((~i[1]).sum(1))
+    model.maxs = maxs.cuda()
+    model.mins = mins.cuda()
+    model.avg_n = torch.cat(n, dim=0).float().cuda().mean()
+    if config["model"] == "MDMA":
+        model.gen_net.avg_n = torch.cat(n, dim=0).float().cuda().mean()
+        model.dis_net.avg_n = torch.cat(n, dim=0).float().cuda().mean()
+    trainer = pl.Trainer(
+        devices=1,
+        precision=32,
+        accelerator="gpu",
+        logger=logger,
+        gradient_clip_val=0.5 if config["model"] == "FM" else None,
+        log_every_n_steps=100,
+        max_epochs=config["max_epochs"],
+        callbacks=callbacks,
+        val_check_interval=(
+            10000
+            if (config["dataset"] == "calo") and config["model"] == "FM"
+            else 5000 if config["dataset"] == "calo" else None
+        ),
+        check_val_every_n_epoch=(
+            1
+            if config["model"] == "PNF"
+            else (
+                50
+                if (config["ckpt"] == "" and config["dataset"] == "jet")
+                else 100 if (config["dataset"] == "jet") else None
+            )
+        ),
+        num_sanity_val_steps=1,
+        limit_val_batches=100,
+        enable_progress_bar=False,
+        default_root_dir="/beegfs/desy/user/{}/{}".format(
+            os.environ["USER"], config["dataset"]
+        ),
+    )
+    if ckpt and "continue" in config.keys() and config["continue"]:
+        print("continuing training")
+        trainer.fit(model, datamodule=data_module, ckpt_path=ckpt)
+    else:
+        trainer.fit(model, datamodule=data_module)
+
 
 if __name__ == "__main__":
-
     print(NAME)
-    config=yaml.load(open("hparams/default_{}.yaml".format(NAME)),Loader=yaml.FullLoader)
-    #set up WandB logger
+    config = yaml.load(
+        open("hparams/default_{}.yaml".format(NAME)), Loader=yaml.FullLoader
+    )
+    # set up WandB logger
     logger = WandbLogger(
-        save_dir="/gpfs/dust/maxwell/user/{}/calochallenge".format(os.environ["USER"]),
+        save_dir="/beegfs/desy/user/{}/calochallenge".format(os.environ["USER"]),
         sync_tensorboard=False,
-        project="MDMA_"+NAME)
+        project="MDMA_" + NAME,
+    )
     # update config with hyperparameters from sweep
     logger.experiment.log_code(".")
     if len(logger.experiment.config.keys()) > 0:
-        config.update(**logger.experiment.config)
-    ckpt=config["ckpt"] if "ckpt" in config.keys() else False
+        config = yaml.load(
+            open("hparams/default_{}.yaml".format(logger.experiment.config["name"])),
+            Loader=yaml.FullLoader,
+        )
 
-    if config["dataset"]=="calo":
+        config.update(**logger.experiment.config)
+    ckpt = config["ckpt"] if "ckpt" in config.keys() else False
+
+    if config["dataset"] == "calo":
         from utils.dataloader_calo import PointCloudDataloader
     else:
         from utils.dataloader_jetnet import PointCloudDataloader
 
     data_module = PointCloudDataloader(**config)
     data_module.setup("train")
-    if config["dataset"]=="jet":
-        callbacks =[ModelCheckpoint(monitor="w1m", save_top_k=2, mode="min",filename="{epoch}-{w1m:.5f}-{fpd:.5f}",every_n_epochs=1,),pl.callbacks.LearningRateMonitor(logging_interval="step"),ModelCheckpoint(monitor="fpd", save_top_k=2, mode="min",filename="{epoch}-{w1m:.5f}-{fpd:.5f}",every_n_epochs=1,),pl.callbacks.LearningRateMonitor(logging_interval="step")]
-    else:
-        callbacks =[ModelCheckpoint(monitor="w1p", save_top_k=2, mode="min",filename="{epoch}-{w1p:.5f}-{weighted_w1p:.5f}",every_n_epochs=1,)]
-    if "swa" in config.keys() and config["swa"]:
-        callbacks.append(StochasticWeightAveraging(swa_lrs=1e-2,swa_epoch_start=0.4))
-    if False:
-        callbacks.append(EMA(decay=0.9999))
-    trainer = pl.Trainer(
-        devices=1,
+    if config["dataset"] == "jet":
+        callbacks = [
+            ModelCheckpoint(
+                monitor="w1m",
+                save_top_k=2,
+                mode="min",
+                filename="{epoch}-{w1m:.5f}-{fpd:.5f}",
+                every_n_epochs=1,
+            ),
+            pl.callbacks.LearningRateMonitor(logging_interval="step"),
+            ModelCheckpoint(
+                monitor="fpd",
+                save_top_k=2,
+                mode="min",
+                filename="{epoch}-{w1m:.5f}-{fpd:.5f}",
+                every_n_epochs=1,
+            ),
 
-        accelerator="gpu",
-        logger=logger,
-        log_every_n_steps=100,
-        max_epochs=config["max_epochs"],
-        callbacks=callbacks,
-        val_check_interval=1000,
-        check_val_every_n_epoch=None,
-        num_sanity_val_steps=1,
-        enable_progress_bar=False,
-        default_root_dir="/gpfs/dust/maxwell/user/{}/{}".format(os.environ["USER"],config["dataset"]),
-    )
-    train(config,logger=logger,data_module=data_module,trainer=trainer,ckpt=ckpt )
+        ]
+    else:
+        callbacks = [
+            ModelCheckpoint(
+                monitor="w1p",
+                save_top_k=2,
+                mode="min",
+                filename="{epoch}-{w1p:.5f}-{weighted_w1p:.5f}",
+                every_n_epochs=1,
+            ),
+            pl.callbacks.LearningRateMonitor(logging_interval="step"),
+        ]
+
+    if config["ema"]:
+        callbacks.append(EMA(**config))
+        callbacks.append(
+            EMAModelCheckpoint(
+                save_last=True,
+                save_top_k=2,
+                monitor="step",
+                mode="max",
+                filename="{epoch}_{step}",
+                every_n_epochs=50,
+                save_on_train_epoch_end=False,
+            )
+        )
+
+    train(config, logger=logger, data_module=data_module, ckpt=ckpt)

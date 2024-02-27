@@ -16,6 +16,6 @@ module purge
 module load maxwell gcc/9.3
 module load anaconda3/5.2
 . conda-init
-conda activate torch2_jetnet
+conda activate mdma-cfm
 cd /home/$USER/MDMACalo/
 python3 main.py jet_pnf

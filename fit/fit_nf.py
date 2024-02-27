@@ -27,11 +27,11 @@ from torch.nn import functional as FF
 from torch.optim.lr_scheduler import (ExponentialLR, OneCycleLR,
                                       ReduceLROnPlateau)
 from models.flowmodels import Flow
-
-from utils.helpers import plotting_point_cloud,mass, get_hists
+from pl_bolts.optimizers.lr_scheduler import LinearWarmupCosineAnnealingLR
+from utils.helpers import plotting_point_cloud,mass, get_hists,fit_kde, sample_kde, create_mask
 import matplotlib.pyplot as plt
 
-from time import time
+import time
 class NF(pl.LightningModule):
 
 
@@ -95,15 +95,19 @@ class NF(pl.LightningModule):
             on the generative sample and to compare to the simulated one, we need to inverse the scaling before calculating the mass
             because calculating the mass is a non linear transformation and does not commute with the mass calculation'''
         fake=None
+        i=0
         while fake is None:
             try:
 
                 if self.hparams.context_features>0:
-                    fake=self.flow.sample(1,cond)
-                    
+                    fake=self.flow.sample(1,cond.reshape(-1,self.hparams.context_features))
+
                 else:
                     fake=self.flow.sample(len(batch))
             except:
+                i+=1
+                if i>5:
+                    break
                 traceback.print_exc()
                 pass
         fake=fake.reshape(-1,3)
@@ -124,9 +128,8 @@ class NF(pl.LightningModule):
     def configure_optimizers(self):
 
         opt_g = torch.optim.AdamW(self.flow.parameters(), lr=self.hparams.lr)
-
-        return opt_g#({'optimizer': opt_g, 'frequency': 1, 'scheduler':None if not self.lr_schedule else scheduler})
-
+        lr_scheduler= LinearWarmupCosineAnnealingLR(opt_g, warmup_epochs=self.trainer.max_epochs//10,max_epochs=self.trainer.max_epochs)
+        return {"optimizer":opt_g,"lr_scheduler":lr_scheduler}
 
 
 
@@ -169,17 +172,17 @@ class NF(pl.LightningModule):
                 self._log_dict = {}
                 batch, mask, cond = batch[0], batch[1], batch[2]
 
-                scaled_batch=self.scaler.inverse_transform(batch.reshape(-1,self.n_part,self.n_dim))
-                scaled_batch[mask]=0
-                cond=mass(scaled_batch).reshape(-1,1)
-                logprob=-self.flow.log_prob(batch.reshape(-1,self.n_dim*self.n_part),cond if self.hparams.context_features else None).mean()/(self.n_dim*self.n_part)
+
+                batch[mask]=0
+                cond=mass(batch).reshape(-1,1)
+                logprob=-self.flow.log_prob(self.scaler.transform(batch.reshape(-1,self.n_part,self.n_dim,)).reshape(-1,self.n_part*self.n_dim)/(self.n_dim*self.n_part),cond if self.hparams.context_features else None).mean()/(self.n_dim*self.n_part)
                 self.log("val_logprob",logprob, logger=True)
 
                 self.w1ps = []
-                start=time()
+                start=time.time()
                 fake,mf = self.sampleandscale(batch=batch, mask=mask, cond=cond, scale=True)
-                self.times.append(time()-start)
-                batch=scaled_batch.reshape(-1,self.n_part,self.n_dim)
+                self.times.append(time.time()-start)
+                batch=batch.reshape(-1,self.n_part,self.n_dim)
                 fake=fake.reshape(-1,self.n_part,self.n_dim)
                 self.batch.append(batch.cpu())
                 self.fake.append(fake.cpu())
@@ -240,4 +243,48 @@ class NF(pl.LightningModule):
             traceback.print_exc()
 
         self.log("fpd", fpd_log, on_step=False, prog_bar=False, logger=True)
+
+    def on_test_epoch_start(self, *args, **kwargs):
+        self.flow.eval()
+        self.n_kde=self.data_module.n_kde
+        self.m_kde=self.data_module.m_kde
+    def test_step(self, batch, batch_idx):
+        '''This calculates some important metrics on the hold out set (checking for overtraining)'''
+
+        with torch.no_grad():
+
+            if batch[0].shape[1]>0:
+
+                self._log_dict = {}
+                batch, mask, cond = batch[0], batch[1], batch[2]
+
+
+                batch[mask]=0
+                if "context_features" in self.hparams.keys() and self.hparams.context_features>0:
+                    start=time.time()
+                    n,m=sample_kde(len(batch)*10,self.n_kde,self.m_kde)
+                    m=m[:len(batch)]
+                    n=n[:len(batch)]
+                    mask=create_mask(n).cuda()
+                    cond=m.cuda().float()
+                else:
+                    n,_=sample_kde(len(batch)*10,self.n_kde,self.m_kde)
+                    mask=create_mask(n).cuda()
+                    start=time.time()
+
+                mask=mask[:len(batch)]
+
+                #self.log("test_logprob",logprob, logger=True)
+
+                self.w1ps = []
+                start=time.time()
+                fake,mf = self.sampleandscale(batch=batch, mask=mask, cond=cond, scale=True)
+                self.times.append(time.time()-start)
+                batch=batch.reshape(-1,self.n_part,self.n_dim)
+                fake=fake.reshape(-1,self.n_part,self.n_dim)
+                self.batch.append(batch.cpu())
+                self.fake.append(fake.cpu())
+                self.masks.append(mask.cpu())
+                self.conds.append(cond.cpu())
+
 

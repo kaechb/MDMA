@@ -20,5 +20,5 @@ module load anaconda3/5.2
 . conda-init
 conda activate mdma-cfm
 cd /home/$USER/MDMACalo/
-python3 evaluate.py
+python3 -m evaluate.evaluate
 

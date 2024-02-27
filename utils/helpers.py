@@ -9,7 +9,9 @@ import warnings
 from functools import partial
 from math import sqrt
 from pathlib import Path
-
+import matplotlib as mpl
+import matplotlib.gridspec as gridspec
+from matplotlib.ticker import MaxNLocator, FuncFormatter
 import h5py
 import hist
 import joblib
@@ -46,6 +48,54 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+from my_cmaps import cmap
+def create_mask(n, size=30):
+    # Ensure n is a 1D tensor
+    n = n.flatten()
+
+    # Create a range tensor [0, 1, 2, ..., size-1]
+    range_tensor = torch.arange(size).unsqueeze(0)
+
+    # Compare range_tensor with n to create the mask
+    mask = range_tensor >= n.unsqueeze(1)
+
+    return mask
+def fit_kde(n,m,n_max=30):
+
+    from sklearn.neighbors import KernelDensity
+    kde=KernelDensity(bandwidth="scott").fit(n.unsqueeze(1).numpy())
+    nhat=kde.sample(100000)
+    nhat=nhat[nhat<n_max+1]
+    mass_distributions = {int(i):m[n==i] for i in range(n.min().int(),n.max().int()+1)}
+    mass_kdes ={}
+
+    for i in mass_distributions.keys():
+        try:
+            mass_kdes[i]=KernelDensity(bandwidth=1e-3).fit(mass_distributions[i].unsqueeze(1).numpy())
+        except:
+            mass_kdes[i]=KernelDensity(bandwidth=1e-3).fit(mass_distributions[i+1].unsqueeze(1).numpy())
+
+
+
+    return kde,mass_kdes
+def sample_kde(n,n_kde,m_kde=False):
+    #fit kde
+    nhat=n_kde.sample(n)
+    np.random.shuffle(nhat)
+    if m_kde:
+        nhat_hist,bins=np.histogram(nhat+0.01,bins=np.arange(0,31),density=False)
+        nhat_hist,bins=torch.tensor(nhat_hist),torch.tensor(bins)
+        nhat_hist,bins=nhat_hist[nhat_hist>0],bins[1:][nhat_hist>0]
+
+        n_dict={int(i):j for i,j in zip(bins,nhat_hist)}
+        ms=[torch.from_numpy(m_kde[int(i)].sample(n_dict[int(i)])) for i in bins]
+        mhat=torch.cat(ms).numpy()
+        np.random.shuffle(mhat)
+
+        return torch.from_numpy(nhat),torch.from_numpy(mhat)
+    else:
+        return nhat
+
 class plotting_thesis():
     '''This is a class that takes care of  plotting steps in the script,
         It is initialized with the following arguments:
@@ -55,12 +105,13 @@ class plotting_thesis():
         model=the model that is trained, a bit of an overkill as it is only used to access the losses
         config=the config used for training
         logger=The logger used for tensorboard logging'''
-    def __init__(self,step=None,logger=None,weight=1):
+    def __init__(self,step=None,logger=None,weight=1,big=False):
 
         self.step=step
         self.weight=weight
+        self.big=big
         self.fig_size1=[6.4, 6.4]
-        self.fig_size2=[2*6.4, 6.4]
+        self.fig_size2=[2*6.4, 2*6.4]
         self.fig_size3=[3*6.4, 6.4]
         self.fig_size4=[4*6.4, 6.4]
         self.alpha=0.3
@@ -68,54 +119,214 @@ class plotting_thesis():
         font = { "size": 18}#"family": "normal",
         mpl.rc("font", **font)
         mpl.rc('lines', linewidth=2)
-        sns.set_palette("Pastel1")
+        # sns.set_palette("Pastel1")
+        self.FONTSIZE=20
         if logger is not None:
             self.summary=logger
         else:
             self.summary = None
-    def plot_ratio(self,h_real,h_fake,weighted,leg=-1,model_name=""):
+
+    def _adjust_legend(self, ax, leg):
+        # Adjust the legend on the plot
+        if leg >= 0:
+            ax.legend(loc="best", fontsize=self.FONTSIZE)
+            handles, labels = ax.get_legend_handles_labels()
+            handles[1] = mpatches.Patch(color=sns.color_palette()[1], label="The red data")
+            ax.legend(handles, labels)
+
+    def plot_ratio_calo(self, h_real, h_fake, weighted=False, leg=-1, model_name="",):
+
+
+
+            # Main plot
+        FONTSIZE=20
+        # Plot variables and their names
+        variables = [r"E",r"z",r"alpha",r"R"]
+        names = [r"$E$",r"$z$",r"$\alpha$",r"$R$"]
+        ticks=[[0,1000,2000,3000,4000,5000,6000],[0,10,20,30,40],[0,5,10,15],[0,2,4,6,8]] if not self.big else [[0,1000,2000,3000,4000,5000,6000],[0,10,20,30,40],[0,10,20,30,40],[0,4,8,12,16]]
+        if weighted:
+            FONTSIZE=FONTSIZE+3
+            fig = plt.figure(figsize=self.fig_size3)
+
+            outer_gs = gridspec.GridSpec(1,3, figure=fig,hspace=0.3,wspace=.3)
+            variables=variables[1:]
+            names=names[1:]
+            ticks=ticks[1:]
+        else:
+            fig = plt.figure(figsize=self.fig_size2)
+            outer_gs = gridspec.GridSpec(2, 2, figure=fig,hspace=0.3,wspace=.3)
+
+        for k, (variable, name,ticks) in enumerate(zip(variables, names,ticks)):
+            inner_gs = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=outer_gs[k],
+                                                        height_ratios=[4, 1], hspace=0
+                                                        )
+
+            # Create the main and ratio axes within the nested grid
+            ax_ratio = fig.add_subplot(inner_gs[1], )
+            ax_main = fig.add_subplot(inner_gs[0],sharex=ax_ratio)
+            locator=MaxNLocator( nbins=6, prune="both")
+            ax_main.yaxis.set_major_locator(locator)
+
+            # Plotting logic
+            h_real[k].plot_ratio(
+                h_fake[k],
+                ax_dict={"main_ax": ax_main, "ratio_ax": ax_ratio},
+                rp_ylabel="Ratio",
+                bar_="blue",
+                rp_num_label="Ground Truth",
+                rp_denom_label="Generated",
+                rp_uncert_draw_type="line"
+            )
+            ax_ratio.set_xlabel(name, fontsize=FONTSIZE)
+            ax_main.set_ylabel("Counts", fontsize=FONTSIZE)
+            ax_ratio.set_ylabel("Ratio", fontsize=FONTSIZE)
+            ax_main.get_legend().remove()
+            ax_ratio.set_ylim(0.5, 1.5) if variable=="E" else ax_ratio.set_ylim(0.9, 1.1)
+            ax_main.set_xlabel("")
+
+            ax_main.patches[0].set_fill(True)
+            ax_main.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
+            ax_ratio.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
+
+
+            ax_main.set_xticks([])
+
+            ax_ratio.set_xticks(ticks,labels=ticks)
+
+            ax_main.patches[0].set_edgecolor("black")
+            ax_main.patches[1].set_linewidth(2)
+            ax_main.patches[0].set_alpha(self.alpha)
+            ax_main.patches[0].set_lw(2)
+            if k==0:
+                ax_main.set_yscale("log")
+            # ax_ratio.set_xlim(ax_main.get_xlim())
+            ax_main.tick_params(axis='x', which='both', length=0, labelbottom=False)
+
+            ax_ratio.tick_params(axis='x', which='both', labelbottom=True)
+            if k==2:
+                self._adjust_legend(ax_main, leg)
+
+
+        plt.tight_layout()
+        big="_big" if self.big else ""
+        weighted="_weighted" if weighted else ""
+        plt.savefig(f"plots/calo/{model_name}{big}{weighted}.pdf", format="pdf")
+        plt.show()
+        plt.close()
+
+    def plot_response(self,h_real,h_fake,model_name):
+        fig,ax=plt.subplots(2,sharex=True,height_ratios=[4,1],figsize=self.fig_size1)
+        h_real.plot_ratio(
+                h_fake,
+                ax_dict={"main_ax":ax[0],"ratio_ax":ax[1]},
+                rp_ylabel=r"Ratio",
+                bar_="blue",
+                rp_num_label="Generated",
+                rp_denom_label="Ground Truth",
+                rp_uncert_draw_type="line",  # line or bar
+            )
+        ax_main,ax_ratio=ax
+        ax_main.set_xlabel("")
+        ax_main.set_ylabel("Counts",fontsize=self.FONTSIZE)
+        ax[1].set_xlabel("Response",fontsize=self.FONTSIZE)
+        ax[1].set_ylabel("Ratio",fontsize=self.FONTSIZE)
+
+        ax_main.legend()
+        ax_ratio.set_ylim(0.5, 1.5)
+        ax_main.set_xlabel("")
+
+
+        ax_main.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
+        ax_ratio.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
+        ax_main.patches[0].set_fill(True)
+        ax_main.patches[0].set_alpha(self.alpha)
+
+        # ax_main.patches[1].set_fc(sns.color_palette()[0])
+        # ax_main.patches[0].set_fc(sns.color_palette()[1])
+        ax_main.patches[0].set_edgecolor("black")
+        ax_main.patches[1].set_linewidth(2)
+
+
+
+
+        ax_main.patches[0].set_lw(2)
+        # ax_ratio.set_xlim(ax_main.get_xlim())
+        ax_main.tick_params(axis='x', which='both', length=0, labelbottom=False)
+
+        ax_ratio.tick_params(axis='x', which='both', labelbottom=True)
+        plt.tight_layout(pad=0.3)
+        plt.savefig(f"plots/calo/response_{model_name}{self.big}.pdf",format="pdf")
+        plt.show()
+
+    def plot_ratio(self,h_real,h_fake,weighted,leg=-1,model_name="",n_part=30):
         i = 0
         k = 0
-        fig, ax = plt.subplots(2, 4, gridspec_kw={"height_ratios": [4, 1]}, figsize=self.fig_size4)
-        # plt.suptitle("All Particles", fontsize=18)
-        for v, name in zip(["eta", "phi", "pt", "m"], [r"relative pseudorapidity $\eta^{\tt rel}$", r"relative phi $\phi^{\tt rel}$", r"relative transverse momentum $p_T^{\tt rel}$", r"relative invariant jet mass $m^{\tt rel}$"]):
-            main_ax_artists, sublot_ax_arists = h_fake[k].plot_ratio(
-            h_real[k],
-            ax_dict={"main_ax":ax[0,k],"ratio_ax":ax[1,k]},
-            rp_ylabel=r"Ratio",
-            bar_="blue",
-            rp_num_label="Generated",
-            rp_denom_label="Ground Truth",
-            rp_uncert_draw_type="line",  # line or bar)
+        FONTSIZE=20
+        fig = plt.figure(figsize=self.fig_size2)
+
+
+
+            # Main plot
+
+        # Plot variables and their names
+        variables = ["eta", "phi", "pt", "m"]
+        names = [r"$\eta^{\mathrm{rel}}$", r"$\phi^{\mathrm{rel}}$", r"$p_T^{\mathrm{rel}}$", r"$m^{\mathrm{rel}}$"]
+
+        outer_gs = gridspec.GridSpec(2, 2, figure=fig,hspace=0.3,wspace=.3)
+
+        for k, (variable, name) in enumerate(zip(variables, names)):
+            inner_gs = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=outer_gs[k],
+                                                        height_ratios=[4, 1], hspace=0
+                                                        )
+
+            # Create the main and ratio axes within the nested grid
+            ax_main = fig.add_subplot(inner_gs[0])
+            ax_ratio = fig.add_subplot(inner_gs[1], sharex=ax_main)
+            ax_main.tick_params(axis='x', which='both', length=0, labelbottom=False)
+
+
+            # Plotting logic
+            h_real[k].plot_ratio(
+                h_fake[k],
+                ax_dict={"main_ax": ax_main, "ratio_ax": ax_ratio},
+                rp_ylabel="Ratio",
+                bar_="blue",
+                rp_num_label="Ground Truth",
+                rp_denom_label="Generated",
+                rp_uncert_draw_type="line"
             )
-            i += 1
-            ax[0, k].set_xlabel("")
-            ax[0, k].patches[1].set_fill(True)
-            ax[0, k].ticklabel_format(axis="y", style="scientific", scilimits=(-3, 3), useMathText=True)
-            ax[0, k].patches[1].set_fc(sns.color_palette()[1])
-            ax[0, k].patches[1].set_edgecolor("black")
-            ax[0, k].patches[1].set_linewidth(2)
-            ax[0, k].patches[1].set_alpha(self.alpha)
-            ax[1, k].set_xlabel(name)
-            ax[0, k].set_ylabel("Counts")
-            ax[1, k].set_ylabel("Ratio")
-            ax[0, k].patches[0].set_lw(2)
-            ax[0, k].get_legend().remove()
-            ax[1,k].set_ylim(0.8,1.2)
-            k += 1
+            ax_ratio.set_xlabel(name, fontsize=FONTSIZE)
+            ax_main.set_ylabel("Counts", fontsize=FONTSIZE)
+            ax_ratio.set_ylabel("Ratio", fontsize=FONTSIZE)
+            ax_main.get_legend().remove()
+            ax_ratio.set_ylim(0.5, 1.5)
+            ax_main.set_xlabel("")
+
+            ax_main.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
+            ax_ratio.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
+
+            locator=MaxNLocator( nbins=6, prune="both")
+            ax_main.yaxis.set_major_locator(locator)
+            ax_main.patches[0].set_fill(True)
+            ax_main.patches[0].set_alpha(self.alpha)
+
+            # ax_main.patches[1].set_fc(sns.color_palette()[0])
+            # ax_main.patches[0].set_fc(sns.color_palette()[1])
+            ax_main.patches[0].set_edgecolor("black")
+            ax_main.patches[1].set_linewidth(2)
+            # ax_main.patches[0].set_lw(2)
+            ax_ratio.set_xlim(ax_main.get_xlim())
+            if k==2:
+                self._adjust_legend(ax_main, leg)
 
 
-        ax[0, leg].legend(loc="best", fontsize=18)
-        handles, labels = ax[0, leg].get_legend_handles_labels()
-        ax[0, -1].locator_params(nbins=4, axis="x")
-        ax[1, -1].locator_params(nbins=4, axis="x")
-        handles[1] = mpatches.Patch(color=sns.color_palette()[1], label="The red data")
-        ax[0, leg].legend(handles, labels)
-        plt.suptitle("Agreement between Ground Truth and Generated Data", fontsize=28, fontweight="bold")
+        # plt.suptitle("All Particles", fontsize=18)
+
+       # plt.suptitle("Agreement between Ground Truth and Generated Data", fontsize=28, fontweight="bold")
         plt.tight_layout(pad=0.3)
-
+        os.makedirs("plots/jetnet{}".format(n_part),exist_ok=True)
         # if not save==None:
-        plt.savefig("plots/{}_jetnet.pdf".format(model_name),format="pdf")
+        plt.savefig("plots/jetnet{}/{}_jetnet.pdf".format(n_part,model_name),format="pdf")
         plt.show()
         plt.close()
 
@@ -130,45 +341,52 @@ class plotting_thesis():
             # Compute the correlation matrix across the batch dimension
             correlation_matrix = np.corrcoef(tensor, rowvar=False)
 
+
             return correlation_matrix
         diffs=[]
+        lims=[]
         for name,data in zip(["Ground Truth","Generated"],[real,fake]):
             # Compute correlation for each batch and then average
             correlations = []
+
             sorted_data, indices = torch.sort(data[:,:,2], dim=1, descending=True)
 
             # Use the indices to reorder the data
             data = torch.gather(data, 1, indices.unsqueeze(-1).expand(-1, -1, 3)).numpy()
             for feature_idx in range(3):
                 correlation_matrix = compute_correlation_matrix(data[:, :, feature_idx])
+                np.fill_diagonal(correlation_matrix, np.nan)
 
+                non_ones = correlation_matrix[correlation_matrix <= 0.99]
+                if name == "Ground Truth":
+                    lims.append((non_ones.min(), non_ones.max()))
                 correlations.append(correlation_matrix)
                 diffs.append(correlation_matrix)
             # Convert tensors to numpy arrays for plotting
             # Plot heatmaps
             fig, axes = plt.subplots(1, 3, figsize=self.fig_size3)
-            fig.suptitle("Correlations between Particles for {} Data".format(name), fontsize=28, fontweight="bold")
-            sns.heatmap(correlations[0], ax=axes[0], cmap='coolwarm', cbar=False,vmin=-1,vmax=1)
-            axes[0].set_title(r'$\eta^{rel}$')
+            # fig.suptitle("Correlations between Particles for {} Data".format(name), fontsize=28, fontweight="bold")
+            sns.heatmap(correlations[0], ax=axes[0], cmap='coolwarm', cbar=False,vmin=lims[0][0],vmax=lims[0][1])
+            axes[0].set_title(r'$\eta^{rel}$',fontsize=self.FONTSIZE+5)
 
-            sns.heatmap(correlations[1], ax=axes[1], cmap='coolwarm', cbar=False,vmin=-1,vmax=1)
-            axes[1].set_title(r'$\phi^{rel}$')
+            sns.heatmap(correlations[1], ax=axes[1], cmap='coolwarm', cbar=False,vmin=lims[1][0],vmax=lims[1][1])
+            axes[1].set_title(r'$\phi^{rel}$',fontsize=self.FONTSIZE+5)
 
-            cax3=sns.heatmap(correlations[2], ax=axes[2], cmap='coolwarm',cbar=False,vmin=-1,vmax=1
+            cax3=sns.heatmap(correlations[2], ax=axes[2], cmap='coolwarm',cbar=False,vmin=lims[2][0],vmax=lims[2][1]
                              )
-            axes[2].set_title(r'$p_T^{rel}$')
+            axes[2].set_title(r'$p_T^{rel}$',fontsize=self.FONTSIZE+5)
             for ax in axes:
                 ax.set_xticks([])
                 ax.set_yticks([])
-                ax.set_xlabel("Particles")
-                ax.set_ylabel("Particles")
+                ax.set_xlabel("Particles",fontsize=self.FONTSIZE+5)
+                ax.set_ylabel("Particles",fontsize=self.FONTSIZE+5)
             cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
             fig.colorbar(cax3.collections[0], cax=cbar_ax)
             plt.tight_layout(rect=[0, 0, 0.9, 1])
             if name=="Ground Truth":
-                plt.savefig("plots/corrGroundTruth.pdf",format="pdf")
+                plt.savefig("plots/jetnet30/corrGroundTruth.pdf",format="pdf")
             else:
-                plt.savefig("plots/corr"+model+".pdf",format="pdf")
+                plt.savefig("plots/jetnet30/corr"+model+".pdf",format="pdf")
             plt.show()
         diff=[diffs[0]-diffs[3],diffs[1]-diffs[4],diffs[2]-diffs[5]]
 
@@ -190,7 +408,7 @@ class plotting_thesis():
         cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
         fig.colorbar(cax3.collections[0], cax=cbar_ax)
         plt.tight_layout(rect=[0, 0, 0.9, 1])
-        plt.savefig("plots/diff_"+model+name+".pdf",format="pdf")
+        plt.savefig("plots/jetnet30/diff_"+model+name+".pdf",format="pdf")
         plt.show()
 
 
@@ -419,7 +637,10 @@ class plotting_point_cloud():
         handles[1]=mpatches.Patch(color=sns.color_palette()[1], label='The red data')
         ax[0,leg].legend(handles, labels)
         plt.tight_layout(pad=0.2)
-        self.summary.log_image("{}ratio".format("weighted " if weighted else "unweighted "), [fig],self.step)
+        try:
+            self.summary.log_image("{}ratio".format("weighted " if weighted else "unweighted "), [fig],self.step)
+        except:
+            plt.show()
         plt.close()
 
     def plot_jet(self, h_real, h_fake, leg=-1,ema=False):
@@ -509,16 +730,16 @@ class plotting_point_cloud():
         ax[0].set_xlabel("")
         plt.ylabel("Counts")
         plt.xlabel("Response")
-        ax[0].legend()
-        if self.summary:
+        try:
+
             plt.tight_layout()
             self.summary.log_image("response", [fig],self.step)
             plt.close()
-        else:
+        except:
             plt.savefig("plots/response.pdf",format="pdf")
             plt.show()
 
-def get_hists(bins,mins,maxs,calo=False,ema=False):
+def get_hists(bins,mins,maxs,calo=False,ema=False,min_response=0,max_response=10):
     hists={}
     hists["hists_real"] = []
     hists["hists_fake"] = []
@@ -528,11 +749,11 @@ def get_hists(bins,mins,maxs,calo=False,ema=False):
     if calo:
         hists["weighted_hists_real"] = []
         hists["weighted_hists_fake"] = []
-        hists["response_real"]=hist.Hist(hist.axis.Regular(bins, 0.6, 1.1))
-        hists["response_fake"]=hist.Hist(hist.axis.Regular(bins, 0.6, 1.1))
+        hists["response_real"]=hist.Hist(hist.axis.Regular(bins[0], min_response, max_response))
+        hists["response_fake"]=hist.Hist(hist.axis.Regular(bins[0], min_response, max_response))
 
-        hists["hists_real"].append(hist.Hist(hist.axis.Regular(bins, 0, 6500)))
-        hists["hists_fake"].append(hist.Hist(hist.axis.Regular(bins, 0, 6500)))
+        hists["hists_real"].append(hist.Hist(hist.axis.Regular(bins[0], 0, 6500)))
+        hists["hists_fake"].append(hist.Hist(hist.axis.Regular(bins[0], 0, 6500)))
 
         for n in bins[1:]:
             hists["hists_real"].append(hist.Hist(hist.axis.Integer(0, n)))
@@ -544,10 +765,9 @@ def get_hists(bins,mins,maxs,calo=False,ema=False):
             for n,mi,ma in zip(bins,mins,maxs):
                 if n==3:
                     mi=0
-                hists["hists_real"].append(hist.Hist(hist.axis.Regular(n,mi, ma)))
-                hists["hists_fake"].append(hist.Hist(hist.axis.Regular(n,mi, ma)))
-                if ema:
-                    hists["hists_fake_ema"].append(hist.Hist(hist.axis.Regular(n,mi, ma)))
+                hists["hists_real"].append(hist.Hist(hist.axis.Regular(n,mi, ma,underflow=True,overflow=True)))
+                hists["hists_fake"].append(hist.Hist(hist.axis.Regular(n,mi, ma,underflow=True,overflow=True)))
+
     return hists
 
 

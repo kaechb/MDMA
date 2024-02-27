@@ -28,9 +28,10 @@ from torch.optim.lr_scheduler import (ExponentialLR, OneCycleLR,
                                       ReduceLROnPlateau)
 from models.flowmodels import Flow,Shape, TDisc
 
-from utils.helpers import plotting_point_cloud,mass, get_hists
+from utils.helpers import plotting_point_cloud,mass, get_hists, sample_kde, create_mask
 import matplotlib.pyplot as plt
-from time import time
+import  time
+
 
 class PNF(pl.LightningModule):
 
@@ -45,11 +46,11 @@ class PNF(pl.LightningModule):
         config=hparams
         config["n_part"]=1
         self.flow=Flow(**config).flow.cuda()
-        if hparams["context_features"]>0:
+        if "context_features" in hparams.keys() and hparams["context_features"]>0:
             self.shape=Shape(**hparams).cuda()
-        if hparams["adversarial"]:
-            self.automatic_optimization=False
-            self.dis_net=TDisc(**hparams).cuda()
+            if "adversarial" in hparams.keys() and hparams["adversarial"]:
+                self.automatic_optimization=False
+                self.dis_net=TDisc(**hparams).cuda()
         self.counter=0
         self.name=hparams["name"]
         self.times=[]
@@ -101,25 +102,27 @@ class PNF(pl.LightningModule):
             on the generative sample and to compare to the simulated one, we need to inverse the scaling before calculating the mass
             because calculating the mass is a non linear transformation and does not commute with the mass calculation'''
         fake=None
-        while fake is None:
+        k=0
+        while k<5:
+
             try:
                 if self.hparams.context_features>=1:
-                    cond=self.shape(batch).repeat_interleave(self.hparams.n_part,dim=0)
-                if self.hparams.context_features>0:
+
                     fake=self.flow.sample(1,cond)
                 else:
                     fake=self.flow.sample(len(batch)*self.n_part)
             except:
+                k+=1
+                print("sampling failed",k)
+
+        if k+1>5:
                 traceback.print_exc()
-                pass
+                raise
 
         #This make sure that everything is on the right device
         #Not here that this sample is conditioned on the mass of the current batch allowing the MSE
         #to be calculated later on
-        if self.hparams.mass_loss:
-            m_f=mass(self.scaler.inverse_transform(fake.reshape(-1,self.n_part,self.n_dim))).reshape(-1)
-        else:
-            m_f=None
+        m_f=None
         if scale:
             fake=self.scaler.inverse_transform(fake.reshape(-1,self.n_part,self.n_dim))
             fake[mask]=0
@@ -160,7 +163,6 @@ class PNF(pl.LightningModule):
         batch[mask]=torch.randn_like(batch[mask])*1e-4
 
         if self.hparams.context_features>=1:
-
             cond=self.shape(batch.reshape(-1,self.hparams.n_part,self.hparams.n_dim)).repeat_interleave(self.hparams.n_part,dim=0)
         elif self.hparams.context_features==0:
             cond=None
@@ -170,31 +172,35 @@ class PNF(pl.LightningModule):
 
         if self.hparams.adversarial:
             opt_g,opt_d,opt_s=self.optimizers()
-            opt_g.zero_grad()
-            g_loss = -self.flow.log_prob(batch,cond if self.hparams.context_features else None).mean()/(self.n_dim)
-            self.log("logprob", g_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True)
-            g_loss.backward()
-            opt_g.step()
-            with torch.no_grad():
+
+            if self.current_epoch>4:
+                with torch.no_grad():
+                    cond=self.shape(batch.reshape(-1,self.hparams.n_part,self.hparams.n_dim)).repeat_interleave(self.hparams.n_part,dim=0)
+                fake,_=self.sampleandscale(batch=batch,mask=mask,cond=cond,scale=False)
+                pred_real=self.dis_net(batch.reshape(-1,self.n_part,self.n_dim),mask=mask)[0]
+                pred_fake=self.dis_net(fake.reshape(-1,self.n_part,self.n_dim),mask=mask)[0]
+                opt_d.zero_grad()
+                d_loss = self.loss(pred_real, pred_fake,critic=True)
+                d_loss.backward()
+                opt_d.step()
+                self.log("d_loss", d_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True)
+                opt_s.zero_grad()
                 cond=self.shape(batch.reshape(-1,self.hparams.n_part,self.hparams.n_dim)).repeat_interleave(self.hparams.n_part,dim=0)
                 fake,_=self.sampleandscale(batch=batch,mask=mask,cond=cond,scale=False)
-            pred_real=self.dis_net(batch.reshape(-1,self.n_part,self.n_dim),mask=mask)
-            pred_fake=self.dis_net(fake.reshape(-1,self.n_part,self.n_dim),mask=mask)
-            opt_d.zero_grad()
-            d_loss = self.loss(pred_real, pred_fake,critic=True)
-            d_loss.backward()
-            opt_d.step()
-            self.log("d_loss", d_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True)
-            opt_s.zero_grad()
-            cond=self.shape(batch.reshape(-1,self.hparams.n_part,self.hparams.n_dim)).repeat_interleave(self.hparams.n_part,dim=0)
-            fake,_=self.sampleandscale(batch=batch,mask=mask,cond=cond,scale=False)
-            pred_fake=self.dis_net(fake.reshape(-1,self.n_part,self.n_dim),mask=mask)
-            g_loss = self.loss(None, pred_fake,critic=False)
-            g_loss.backward()
-            opt_s.step()
-            self.log("shape_loss", g_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True)
+                pred_fake=self.dis_net(fake.reshape(-1,self.n_part,self.n_dim),mask=mask)[0]
+                g_loss = self.loss(None, pred_fake,critic=False)
+                g_loss=torch.clamp(g_loss,0,1)*self.hparams.lambda_dis
+                g_loss.backward()
+                opt_s.step()
+                self.log("shape_loss", g_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True)
+            else:
+                opt_g.zero_grad()
+                g_loss = -self.flow.log_prob(batch,cond if self.hparams.context_features else None).mean()/(self.n_dim)
+                self.log("logprob", g_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True)
+                g_loss.backward()
+                opt_g.step()
         else:
-            g_loss = -self.flow.log_prob(batch,cond if self.hparams.context_features else None).mean()/(self.n_dim)
+            g_loss = -self.flow.log_prob(batch,cond ).mean()/(self.n_dim)
             self.log("logprob", g_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True)
 
         #some conditions on when we want to actually add the mass loss to our training loss, if we dont add it, it is as it wouldnt exist
@@ -212,20 +218,20 @@ class PNF(pl.LightningModule):
                 self._log_dict = {}
 
                 batch, mask, cond = batch[0], batch[1], batch[2]
-                if self.hparams.context_features>=1:
-                    cond=self.shape(batch).repeat_interleave(self.hparams.n_part,dim=0)
-                elif self.hparams.context_features==0:
-                    cond=None
-                scaled_batch=self.scaler.inverse_transform(batch)
-                scaled_batch[mask]=0
-                logprob=-self.flow.log_prob(batch.reshape(-1,self.n_dim),cond if self.hparams.context_features else None).mean()/(self.n_dim)
-                self.log("val_logprob",logprob, logger=True)
 
+                scaled_batch=self.scaler.transform(batch)
+                scaled_batch[mask]=torch.randn_like(scaled_batch[mask])*1e-4
+                if self.hparams.context_features>=1:
+                    cond=self.shape(scaled_batch.reshape(-1,self.hparams.n_part,self.hparams.n_dim)).repeat_interleave(self.hparams.n_part,dim=0)
+                else:
+                    cond=None
+                logprob=-self.flow.log_prob(scaled_batch.reshape(-1,self.n_dim),cond).mean()/(self.n_dim)
+                self.log("val_logprob",logprob, logger=True)
                 self.w1ps = []
-                start=time()
+                start=time.time()
                 fake,mf = self.sampleandscale(batch=batch, mask=mask, cond=cond, scale=True)
-                self.times.append(time()-start)
-                batch=scaled_batch.reshape(-1,self.n_part,self.n_dim)
+                self.times.append((time.time()-start)/len(batch))
+                batch=batch.reshape(-1,self.n_part,self.n_dim)
                 fake=fake.reshape(-1,self.n_part,self.n_dim)
                 self.batch.append(batch.cpu())
                 self.fake.append(fake.cpu())
@@ -288,4 +294,36 @@ class PNF(pl.LightningModule):
             traceback.print_exc()
 
         self.log("fpd", fpd_log, on_step=False, prog_bar=False, logger=True)
+    def on_test_epoch_start(self, *args, **kwargs):
+        self.flow.eval()
+        self.n_kde=self.data_module.n_kde
+        self.m_kde=self.data_module.m_kde
+    def test_step(self, batch, batch_idx):
+        '''This calculates some important metrics on the hold out set (checking for overtraining)'''
 
+        with torch.no_grad():
+
+            if batch[0].shape[1]>0:
+
+                self._log_dict = {}
+                batch, mask, cond = batch[0], batch[1], batch[2]
+
+                scaled_batch=self.scaler.transform(batch)
+                scaled_batch[mask]=torch.randn_like(scaled_batch[mask])*1e-4
+                batch[mask]=0
+                if self.hparams.context_features>=1:
+                    cond=self.shape(scaled_batch.reshape(-1,self.hparams.n_part,self.hparams.n_dim)).repeat_interleave(self.hparams.n_part,dim=0)
+                elif self.hparams.context_features==0:
+                    cond=None
+
+
+                self.w1ps = []
+                start=time.time()
+                fake,mf = self.sampleandscale(batch=batch, mask=mask, cond=cond, scale=True)
+                self.times.append(time.time()-start)
+                batch=batch.reshape(-1,self.n_part,self.n_dim)
+                fake=fake.reshape(-1,self.n_part,self.n_dim)
+                self.batch.append(batch.cpu())
+                self.fake.append(fake.cpu())
+                self.masks.append(mask.cpu())
+                # self.conds.append(cond.cpu())

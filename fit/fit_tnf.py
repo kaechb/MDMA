@@ -15,21 +15,18 @@ from torch.nn.utils.rnn import pad_sequence
 rng = np.random.default_rng()
 # from metrics import *
 import pickle
-from time import time
+
+import time
 
 import matplotlib.pyplot as plt
 
 from models.flowmodels import Flow, TDisc, TGen
-from utils.helpers import get_hists, mass, plotting_point_cloud
+from utils.helpers import get_hists, mass, plotting_point_cloud, sample_kde, create_mask
 
 
 def response(fake, batch, cond, mask):
-    response_real = (
-        (fake[:, :, 0].sum(1).reshape(-1) / (cond[:, 0] + 10).exp()).cpu().numpy()
-    )
-    response_fake = (
-        (batch[:, :, 0].sum(1).reshape(-1) / (cond[:, 0] + 10).exp()).cpu().numpy()
-    )
+    response_real = ((fake[:, :, 0].sum(1).reshape(-1) / (cond[:, 0] + 10).exp()).cpu().numpy())
+    response_fake = ((batch[:, :, 0].sum(1).reshape(-1) / (cond[:, 0] + 10).exp()).cpu().numpy())
     return response_real, response_fake
 
 
@@ -111,48 +108,28 @@ class TNF(pl.LightningModule):
             1 / self.power_lambda
         )
 
-    def sampleandscale(self, batch, mask, scale=False, cond=None):
+    def sampleandscale(self, batch, mask, scale=False, cond=None,test=False):
         """Samples from the generator and optionally scales the output back to the original scale"""
         with torch.no_grad():
-            z = self.flow.sample(len(batch)).reshape(
-                -1, self.hparams.n_part, self.hparams.n_dim
-            )
-            if scale:
+            z = self.flow.sample(len(batch)).reshape(-1, self.hparams.n_part, self.hparams.n_dim)
+            z = z[:,:batch.shape[1],:]
+            if test:
                 kde_sample = self.kde.resample(int(len(batch) * 2)).T
                 n_sample = np.rint(kde_sample)
-                n_sample = (
-                    torch.tensor(n_sample[(n_sample >= 1) & (n_sample <= 150)])
-                    .cuda()
-                    .long()
-                )
+                n_sample = (torch.tensor(n_sample[(n_sample >= 1) & (n_sample <= 150)]).cuda().long())
                 indices = torch.arange(self.hparams.n_part, device="cuda")
                 mask = indices.view(1, -1) < torch.tensor(n_sample).view(-1, 1)
                 mask = ~mask.bool()[: len(z)]
-                z[
-                    mask
-                ] = 0  # Since mean field is initialized by sum, we need to set the masked values to zero
-        if not scale or not self.swa:
-            fake = self.gen_net(
-                z,
-                mask=mask.clone(),
-            )
-        else:
-            fake = self.gen_net_averaged(
-                z,
-                mask=mask,
-            )
+                z[mask] = 0  # Since mean field is initialized by sum, we need to set the masked values to zero
 
+        fake = self.gen_net(z,mask=mask.clone(),)
         fake[mask] = 0  # set the masked values to zero
         if scale:
             fake_scaled = self.scaler.inverse_transform(fake).float()
-            fake_scaled = fake_scaled.clamp(
-                self.scaled_mins[:-1], self.scaled_maxs[:-1]
-            )
+            fake_scaled = fake_scaled.clamp(self.scaled_mins[:-1], self.scaled_maxs[:-1])
             # fake_scaled[fake_scaled[:,:,2]<1e-4,:]=0
             assert (
-                fake_scaled.reshape(-1, self.hparams.n_dim).max(0)[0]
-                <= self.scaled_maxs[: self.hparams.n_dim]
-            ).all()
+                fake_scaled.reshape(-1, self.hparams.n_dim).max(0)[0]<= self.scaled_maxs[: self.hparams.n_dim]).all()
             # fake_scaled[mask] = 0  # set the masked values
             return fake_scaled, None
         else:
@@ -215,8 +192,9 @@ class TNF(pl.LightningModule):
         return [opt_d, opt_g], [sched_d, sched_g]
 
     def schedulers(self, opt_d, opt_g):
-        sched_d = LinearWarmupCosineAnnealingLR(opt_d, 2000, 1500 * 1000)
-        sched_g = LinearWarmupCosineAnnealingLR(opt_g, 2000, 1500 * 1000)
+        sched_d= LinearWarmupCosineAnnealingLR(opt_d, warmup_epochs=self.hparams.num_batches*5,max_epochs=self.trainer.max_epochs*self.hparams.num_batches, warmup_start_lr=1e-6, eta_min=1e-6)
+        sched_g= LinearWarmupCosineAnnealingLR(opt_g, warmup_epochs=self.hparams.num_batches*5,max_epochs=self.trainer.max_epochs*self.hparams.num_batches, warmup_start_lr=1e-6, eta_min=1e-6)
+
         return sched_d, sched_g
 
     def train_disc(self, batch, mask, opt_d):
@@ -224,10 +202,10 @@ class TNF(pl.LightningModule):
         with torch.no_grad():
             fake = self.sampleandscale(batch=batch, mask=mask)
         batch[mask] = 0
-        pred_real = self.dis_net(
+        pred_real,_ = self.dis_net(
             batch, mask=mask
         )  # mean_field is used for feature matching
-        pred_fake = self.dis_net(fake.detach(), mask=mask)
+        pred_fake,_ = self.dis_net(fake.detach(), mask=mask)
         self._log_dict["Training/pred_real_mean"] = pred_real.mean()
         self._log_dict["Training/pred_fake_mean"] = pred_fake.mean()
         d_loss = self.loss(pred_real.reshape(-1), pred_fake.reshape(-1), critic=True)
@@ -241,7 +219,7 @@ class TNF(pl.LightningModule):
         opt_d.zero_grad()
         self.dis_net.zero_grad()
         self.manual_backward(d_loss)
-        # if self.i%self.hparams.N==0:
+
         opt_d.step()
 
     def train_gen(
@@ -252,7 +230,7 @@ class TNF(pl.LightningModule):
     ):
         """Trains the generator"""
         fake = self.sampleandscale(batch=batch, mask=mask)
-        pred = self.dis_net(fake, mask=mask)
+        pred,_ = self.dis_net(fake, mask=mask)
         self._log_dict["Training/pred_fake_mean_gen"] = pred.mean()
         g_loss = self.loss(None, pred.reshape(-1), critic=False)
         self.g_loss_mean = (
@@ -264,7 +242,6 @@ class TNF(pl.LightningModule):
         opt_g.zero_grad()
         self.gen_net.zero_grad()
         self.manual_backward(g_loss)
-        # if self.i%self.hparams.N==0:
         opt_g.step()
         self._log_dict["Training/g_loss"] = self.g_loss_mean
 
@@ -273,13 +250,7 @@ class TNF(pl.LightningModule):
 
         if batch[0].shape[1] > 0:
             batch, mask, cond = batch[0], batch[1].bool(), batch[2]
-            if self.hparams.noise:
-                batch[:, :, : self.hparams.n_dim] *= torch.ones_like(
-                    batch[:, :, : self.hparams.n_dim]
-                ) + torch.normal(
-                    torch.zeros_like(batch[:, :, : self.hparams.n_dim]),
-                    torch.ones_like(batch[:, :, : self.hparams.n_dim]) * 1e-3,
-                )
+
 
             opt_d, opt_g = self.optimizers()
             sched_d, sched_g = self.lr_schedulers()
@@ -293,8 +264,7 @@ class TNF(pl.LightningModule):
             sched_g.step()
 
             self.step += 1
-            if self.swa:  # and self.i%self.hparams.N==0 :
-                self.gen_net_averaged.update_parameters(self.gen_net)
+
 
     def validation_step(self, batch, batch_idx):
         """This calculates some important metrics on the hold out set (checking for overtraining)"""
@@ -302,59 +272,26 @@ class TNF(pl.LightningModule):
             if batch[0].shape[1] > 0:
                 self._log_dict = {}
                 batch, mask, cond = batch[0], batch[1], batch[2]
-                if self.hparams.dataset == "calo":
-                    cond = cond.reshape(-1, 1, 2).float()
-                else:
-                    cond = cond.reshape(-1, 1, 1).float()
-                self.w1ps = []
-                start = time()
-                fake, _ = self.sampleandscale(batch=batch, mask=mask, scale=True)
 
-                batch = self.scaler.inverse_transform(batch).float()
-                self.times.append(time() - start)
+                cond = cond.reshape(-1, 1, 1).float()
+                self.w1ps = []
+                start = time.time()
+                fake, _ = self.sampleandscale(batch=batch, mask=mask, scale=True)
+                self.times.append(time.time() - start)
                 assert (fake == fake).all()
                 self.batch.append(batch.cpu())
                 self.fake.append(fake.cpu())
                 self.masks.append(mask.cpu())
                 self.conds.append(cond.cpu())
-                if self.name == "jet":
-                    self.hists_real[-1].fill(mass(batch).cpu().numpy())
-                    m = mass(fake[: len(batch)])
-                    m = (
-                        m.clamp(self.scaled_mins[-1], self.scaled_maxs[-1])
-                        .cpu()
-                        .numpy()
-                    )
-                    self.hists_fake[-1].fill(m)
-                else:
-                    response_real = (
-                        (fake[: len(cond), :, 0].sum(1) / (cond[:, :, 0] + 10).exp())
-                        .cpu()
-                        .numpy()
-                        .reshape(-1)
-                    )
-                    response_fake = (
-                        (batch[:, :, 0].sum(1) / (cond[:, :, 0] + 10).exp())
-                        .cpu()
-                        .numpy()
-                        .reshape(-1)
-                    )
-                    self.response_real.fill(response_real)
-                    self.response_fake.fill(response_fake)
-                    for i in range(self.hparams.n_dim):
-                        self.hists_real[i].fill(batch[~mask][:, i].cpu().numpy())
-                        self.hists_fake[i].fill(
-                            fake[: len(batch)][~mask][:, i].cpu().numpy()
-                        )
-                        if self.name == "calo" and i > 0:
-                            self.weighted_hists_fake[i - 1].fill(
-                                fake[: len(batch)][~mask][:, i].cpu().numpy(),
-                                weight=fake[: len(batch)][~mask][:, 0].cpu().numpy(),
-                            )
-                            self.weighted_hists_real[i - 1].fill(
-                                batch[~mask][:, i].cpu().numpy(),
-                                weight=batch[~mask][:, 0].cpu().numpy(),
-                            )
+
+                for i in range(3):
+                    self.hists_real[i].fill(batch[~mask][:, i].cpu().numpy())
+                    self.hists_fake[i].fill(fake[~mask][:, i].cpu().numpy())
+
+                self.hists_real[-1].fill(mass(batch).cpu().numpy())
+                m = mass(fake[: len(batch)])
+                m = (m.clamp(self.scaled_mins[-1], self.scaled_maxs[-1]).cpu().numpy())
+                self.hists_fake[-1].fill(m)
 
             # self.fill_hist(real=batch, fake=fake)
 
@@ -384,15 +321,24 @@ class TNF(pl.LightningModule):
             dim=0,
         )
         print("sample lengths:", len(real), len(fake))
-        w1m_ = w1m(real, fake, num_batches=16)[0]
-        print(w1m_)
+        w1m_ = w1m(real, fake)[0]
+        if self.w1m_best >= w1m_:
+            self.w1m_best = w1m_
+            self.log(
+                "best_w1m",
+                w1m_,
+                on_step=False,
+                prog_bar=False,
+                logger=True,
+                on_epoch=True,
+            )
+
         if (
             not hasattr(self, "true_fpd")
-            or not hasattr(self, "full")
             and w1m_ < self.w1m_best * 1.2
         ):
-            self.true_fpd = get_fpd_kpd_jet_features(real, efp_jobs=1)
-            self.full = True
+            if not hasattr(self, "true_fpd"):
+                self.true_fpd = get_fpd_kpd_jet_features(real, efp_jobs=1)
             self.min_fpd = 0.01
         """calculates some metrics and logs them"""
         # calculate w1m 10 times to stabilize for ckpting
@@ -405,32 +351,57 @@ class TNF(pl.LightningModule):
             fpd_log = fpd_[0]
             self.log("actual_fpd", fpd_[0], on_step=False, prog_bar=False, logger=True)
         if (
-            w1m_ < self.w1m_best
+           True
         ):  # only log images if w1m is better than before because it takes a lot of time
-            self.w1m_best = w1m_
-            self.log(
-                "best_w1m",
-                w1m_,
-                on_step=False,
-                prog_bar=False,
-                logger=True,
-                on_epoch=True,
-            )
+
+
             self.plot = plotting_point_cloud(step=self.global_step, logger=self.logger)
             try:
                 self.plot.plot_jet(self.hists_real, self.hists_fake)
                 # self.plot.plot_scores(torch.cat(self.scores_real).numpy().reshape(-1), torch.cat(self.scores_fake.reshape(-1)).numpy(), False, self.global_step)
 
             except Exception as e:
+
                 plt.close()
+                fig = plt.figure()
+                plt.hist(mass(torch.cat(self.fake)).cpu().numpy().reshape(-1), bins=100,label="fake")
+                plt.hist(mass(torch.cat(self.batch)).cpu().numpy().reshape(-1), bins=100,label="real")
+                self.logger.log_image("mass",[fig])
                 traceback.print_exc()
 
         self.log("fpd", fpd_log, on_step=False, prog_bar=False, logger=True)
-        if (
-            self.w1m_best < 0.001
-            and self.hparams.start_swa
-            and not hasattr(self, "gen_net_averaged")
-        ):
-            self.gen_net_averaged = AveragedModel(self.gen_net)
-            self.gen_net_averaged.avg_n = self.avg_n
-            self.swa = True
+    def on_test_epoch_start(self, *args, **kwargs):
+        self.gen_net.eval()
+        self.flow.eval()
+        self.n_kde=self.data_module.n_kde
+        self.m_kde=self.data_module.m_kde
+    def test_step(self, batch, batch_idx):
+        '''This calculates some important metrics on the hold out set (checking for overtraining)'''
+
+        with torch.no_grad():
+
+            if batch[0].shape[1]>0:
+
+                self._log_dict = {}
+                batch, mask, cond = batch[0], batch[1], batch[2]
+
+
+                batch[mask]=0
+
+                n,_=sample_kde(len(batch)*10,self.n_kde,self.m_kde)
+                mask=create_mask(n).cuda()
+                start=time.time()
+                mask=mask[:len(batch)]
+                #self.log("test_logprob",logprob, logger=True)
+
+                self.w1ps = []
+                start=time.time()
+                fake,mf = self.sampleandscale(batch=batch, mask=mask, cond=cond, scale=True)
+                self.times.append(time.time()-start)
+                batch=batch.reshape(-1,self.hparams.n_part,self.n_dim)
+                fake=fake.reshape(-1,self.hparams.n_part,self.n_dim)
+                self.batch.append(batch.cpu())
+                self.fake.append(fake.cpu())
+                self.masks.append(mask.cpu())
+                self.conds.append(cond.cpu())
+
