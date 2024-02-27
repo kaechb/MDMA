@@ -1,0 +1,49 @@
+method: random
+metric:
+  name: w1m
+  goal: minimize
+name: "please?"
+parameters:
+  dataset:
+    values:
+      - jet
+  frequencies:
+    values:
+     - 16
+  batch_size:
+    values:
+    - 512
+    - 1024
+  lr:
+    values:
+      - 0.0001
+  num_layers:
+    values:
+      - 8
+      - 6
+      - 4
+  hidden:
+    values:
+      - 256
+  heads:
+    values:
+      - 16
+  exact:
+    values:
+      - true
+      - false
+      - "target"
+  ckpt:
+    values:
+      - false
+      - "/gpfs/dust/maxwell/user/kaechben/calochallenge/MDMA_jet_fm/0fhhvg6w/checkpoints/epoch=3004-w1m=0.00154-fpd=10.00000.ckpt"
+  boxcox:
+    values:
+      - false
+      - true
+program: main.py
+command:
+  - ${env}
+  - python
+  - ${program}
+  - "jet_fm"

@@ -1,0 +1,30 @@
+method: grid
+metric:
+  name: w1m
+  goal: minimize
+
+name: "tnf30"
+parameters:
+  dataset:
+    values:
+      - jet
+  name:
+    values:
+      - jet_tnf
+  model:
+    values:
+      - TNF
+  spectralnorm:
+    values:
+      - true
+      - false
+  fast:
+    values:
+      - true
+      - false
+program: main.py
+command:
+  - ${env}
+  - python
+  - ${program}
+  - "jet_tnf"

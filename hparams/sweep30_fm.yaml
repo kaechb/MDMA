@@ -1,0 +1,29 @@
+method: grid
+metric:
+  name: w1m
+  goal: minimize
+
+name: "FM30"
+parameters:
+  dataset:
+    values:
+      - jet
+  n_part:
+    values:
+      - 30
+  model:
+    values:
+      - FM
+  name:
+    values:
+      - jet_fm
+  exact:
+    values:
+      - true
+      - false
+program: main.py
+command:
+  - ${env}
+  - python
+  - ${program}
+  - "jet_fm"

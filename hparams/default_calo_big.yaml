@@ -1,0 +1,63 @@
+avg_n: 70
+E_loss: false
+L2: false
+'N': 1
+adversarial: true
+amp: false
+augmentation: false
+batch_size: 64
+bins:
+  - 100
+  - 45
+  - 50
+  - 18
+ckpt: 'ckpts/mdma_calo.ckpt'
+cloudnorm: false
+cloudnormgen: false
+cond_dim: 2
+dataset: calo
+middle: false
+decay: 0.999
+dropout: 0
+ema: false
+ema_start: 500000
+fid: false
+freq: 3
+gan: wgan
+glu: true
+gp: true
+heads: 16
+heads_gen: 64
+hidden: 1024
+hidden_gen: 1024
+l_dim: 16
+l_dim_gen: 16
+lambda: 0.1
+lambda_gp: 10
+lambda_response: 0.1
+lr: 0.000001
+max: true
+max_epochs: 2000
+mean_field_loss: true
+model: MDMA
+n_dim: 4
+name: calo
+names:
+  - E
+  - z
+  - alpha
+  - R
+noise: false
+num_R: 9
+num_alpha: 16
+num_layers: 3
+num_layers_gen: 4
+num_z: 45
+opt: AdamW
+sampler: true
+spectralnorm: false
+stop_mean: true
+t_local_cat: true
+t_global_cat: true
+weightnorm: true
+weightdecay: 0.000005

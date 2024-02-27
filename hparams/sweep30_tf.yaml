@@ -1,0 +1,38 @@
+method: grid
+metric:
+  name: w1m
+  goal: minimize
+
+name: "Gans30"
+parameters:
+  dataset:
+    values:
+      - jet
+  name:
+    values:
+      - jet_tf
+  model:
+    values:
+      - TF
+  weightnorm:
+    values:
+      - false
+      - true
+  spectralnorm:
+    values:
+      - true
+      - false
+  ema:
+    values:
+      - true
+      - false
+  fast:
+    values:
+      - true
+      - false
+program: main.py
+command:
+  - ${env}
+  - python
+  - ${program}
+  - "jet_tf"
