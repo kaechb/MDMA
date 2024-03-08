@@ -17,12 +17,12 @@ ema_start: 1000
 frequencies: 16
 exact: false
 glu: false
-hidden_dim: 64
-latent: 16
-layers: 16
+hidden_dim: 256
+latent: 128
+layers: 6
 lr: 0.000001
 max: true
-max_epochs: 2000
+max_epochs: 200
 model: FM
 n_dim: 3
 n_part: 150
@@ -30,5 +30,5 @@ name: jet
 num_heads: 8
 opt: AdamW
 parton: t
-sampler: true
+sampler: false
 weightdecay: 0.01

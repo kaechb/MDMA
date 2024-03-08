@@ -32,16 +32,33 @@ from fit.fit_pnf import PNF
 from fit.fit_tf import TF
 from fit.fit_tnf import TNF
 from models.model import Disc, Gen
-from preprocess_new import DQ, Cart, DQLinear, LogitTransformer, ScalerBaseNew
-from preprocess_new import SqrtTransformer
-from preprocess_new import SqrtTransformer as LogTransformer
+from utils.preprocess import DQ, Cart, DQLinear, LogitTransformer, ScalerBase
+from utils.preprocess import SqrtTransformer
+from utils.preprocess import SqrtTransformer as LogTransformer
 from utils.helpers import *
 
 if len(sys.argv) > 1:
     NAME = sys.argv[1]
 else:
-    NAME = "calo"
+    NAME = "jet_nf"
 
+def setup_scaler_calo(config, data_module,model):
+        model.scaler=data_module.scaler
+        model.power_lambda = model.scaler.transfs[0].lambdas_[0]
+        model.mean = model.scaler.transfs[0]._scaler.mean_[0]
+        model.scale = model.scaler.transfs[0]._scaler.scale_[0]
+        model.pos_mean = torch.tensor(model.scaler.transfs[1].steps[2][1].mean_).cuda()
+        model.pos_scale = torch.tensor(
+            model.scaler.transfs[1].steps[2][1].scale_
+        ).cuda()
+        model.pos_max_scale = torch.tensor(
+            model.scaler.transfs[1].steps[0][1].scale_
+        ).cuda()
+        model.pos_min = torch.tensor(model.scaler.transfs[1].steps[0][1].min_).cuda()
+        model.power_lambda = model.scaler.transfs[0].lambdas_[0]
+        model.mean = model.scaler.transfs[0]._scaler.mean_[0]
+        model.scale = model.scaler.transfs[0]._scaler.scale_[0]
+        return model
 
 def setup_model(config, data_module=None, model=False):
     """
@@ -73,20 +90,14 @@ def setup_model(config, data_module=None, model=False):
         pass
     else:
         raise ValueError("model not found")
-
     if "gan" in config.keys():
-        model.loss = (
-            losses.hinge
-            if config["gan"] == "hinge"
-            else losses.wasserstein if config["gan"] == "wgan" else losses.least_squares
-        )
+        model.loss = losses.wasserstein if config["gan"] == "wgan" else losses.least_squares
         model.gp = config["gp"]
         model.d_loss_mean = None
         model.g_loss_mean = None
 
     if config["dataset"] == "calo":
         model.bins = config["bins"]
-
         model.num_z, model.num_alpha, model.num_R = model.bins[1:]
         model.E_loss = config["E_loss"]
         model.lambda_gp = config["lambda_gp"]
@@ -94,30 +105,15 @@ def setup_model(config, data_module=None, model=False):
         model.min_weighted_w1p = 0.1
         model.min_w1p = 0.1
         model.minE = 0.01
-        model.scaler = data_module.scaler
         model.n_dim = 4
-        model.power_lambda = model.scaler.transfs[0].lambdas_[0]
-        model.mean = model.scaler.transfs[0]._scaler.mean_[0]
-        model.scale = model.scaler.transfs[0]._scaler.scale_[0]
-        model.pos_mean = torch.tensor(model.scaler.transfs[1].steps[2][1].mean_).cuda()
-        model.pos_scale = torch.tensor(
-            model.scaler.transfs[1].steps[2][1].scale_
-        ).cuda()
-        model.pos_max_scale = torch.tensor(
-            model.scaler.transfs[1].steps[0][1].scale_
-        ).cuda()
-        model.pos_min = torch.tensor(model.scaler.transfs[1].steps[0][1].min_).cuda()
-        model.power_lambda = model.scaler.transfs[0].lambdas_[0]
-        model.mean = model.scaler.transfs[0]._scaler.mean_[0]
-        model.scale = model.scaler.transfs[0]._scaler.scale_[0]
+        model=setup_scaler_calo(config, data_module,model)
         model.E_loss_mean = None
     else:
         model.bins = [100, 100, 100]
         model.n_dim = 3
-        model.scaler = data_module.scaler
+        model.scaler = data_module.scaler[0]
+        model.pt_scaler= data_module.scaler[1]
         model.w1m_best = 0.01
-
-    model.i = 0
 
     if config["dataset"] == "jet":
         model.scaled_mins = torch.tensor(data_module.mins).cuda()
@@ -139,59 +135,34 @@ def train(config, logger, data_module, ckpt=False):
     # Callbacks to use during the training, we  checkpoint our models
     print("This is run: ", logger.experiment.name)
     print("config:", config)
-    # if config["name"] != "FM":
-    # torch.set_float32_matmul_precision("highest")
-    # if config["model"]=="MDMA":
-    #     torch.set_float32_matmul_precision("medium")
     torch.set_float32_matmul_precision("medium")
-
     if not ckpt:
         model = setup_model(config, data_module, model=False)
-
     else:
-
         if config["model"] == "MDMA":
-
             if config["dataset"] == "jet" and config["n_part"] == 150:
-                model = MDMA.load_from_checkpoint(
-                    ckpt,
-                    n_part=config["n_part"],
-                    batch_size=config["batch_size"],
-                    num_batches=data_module.num_batches,
-                )
-            elif (
-                config["dataset"] == "calo"
-                and "middle" in config.keys()
-                and config["middle"] == False
-            ):
-                print("loaded MDMA")
-                model = MDMA.load_from_checkpoint(
-                    ckpt,bins=config["bins"],strict=True,lr=config["lr"],
-                )
-            else:
-                model = MDMA.load_from_checkpoint(
-                    ckpt, stop_mean=False, E_loss=config["E_loss"]
-                )
-        elif config["model"] == "FM":
+                model = MDMA.load_from_checkpoint(ckpt,**config)
 
+            elif (config["dataset"] == "calo" and "middle" in config.keys() and config["middle"] == False):
+                model = MDMA.load_from_checkpoint(
+                    ckpt,strict=True, bins=config["bins"],lr=config["lr"],max=config["max"]
+                )
+                model=setup_scaler_calo(config, data_module,model)
+
+        elif config["model"] == "FM":
             # state_dict=setup_state_dict(state_dict["state_dict"])
             if config["dataset"] == "jet" and config["n_part"] == 150:
-                model = FM.load_from_checkpoint(
-                    ckpt,
-                    strict=False,
-                    n_part=config["n_part"],
-                    exact=config["exact"],
-                    lr=config["lr"],
-                )
+                model = FM.load_from_checkpoint(ckpt, **config)
             else:
-
-                model = FM.load_from_checkpoint(ckpt, bins=config["bins"],lr=config["lr"],)
-
-        #   model.net.load_state_dict(state_dict)
+                model = FM.load_from_checkpoint(ckpt, bins=config["bins"],lr=config["lr"],exact=config["exact"])
         elif config["model"] == "NF":
-            model = NF(**config).load_from_checkpoint(ckpt, **config)
+            model = NF.load_from_checkpoint(ckpt, lambda_m=config["lambda_m"],mass_loss=config["mass_loss"],)
+        elif config["model"] == "PNF":
+            model = PNF.load_from_checkpoint(ckpt, adversarial=config["adversarial"],strict=False)
         elif config["model"] == "TNF":
-            model = TNF(**config).load_from_checkpoint(ckpt, **config)
+            model = TNF.load_from_checkpoint(ckpt,)
+        elif config["model"] == "TF":
+            model = TF.load_from_checkpoint(ckpt,)
         model = setup_model(config, data_module, model)
 
     model.load_datamodule(data_module)
@@ -234,7 +205,7 @@ def train(config, logger, data_module, ckpt=False):
             else (
                 50
                 if (config["ckpt"] == "" and config["dataset"] == "jet")
-                else 100 if (config["dataset"] == "jet") else None
+                else 5 if (config["dataset"] == "jet") else None
             )
         ),
         num_sanity_val_steps=1,

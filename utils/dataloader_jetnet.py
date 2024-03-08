@@ -135,13 +135,17 @@ class PointCloudDataloader(pl.LightningDataModule):
         self.mins[:3]=data.reshape(-1,4).min(0)[0].numpy()[:3]
         self.maxs[:3]=data.reshape(-1,4).max(0)[0].numpy()[:3]
         self.maxs[3]=mass(data[:,:,:3]).max().numpy()
-        self.scalers=[]
-        self.scaler=StandardScaler()
-        temp=data[:,:,:-1].reshape(-1,self.n_dim)
-        temp[~(data[:,:,-1]).bool().reshape(-1)]=self.scaler.fit_transform(temp[~(data[:,:,-1]).bool().reshape(-1),:])
-        self.std_mins=temp.min(0)[0]
-        self.std_maxs=temp.max(0)[0]
-        data[:,:,:-1]=temp.reshape(-1,self.n_part,self.n_dim)
+        self.scaler=[StandardScaler(),BoxCoxTransformer()]
+
+        temp=data[:,:,:-2].reshape(-1,self.n_dim-1)
+        temp[~(data[:,:,-1]).bool().reshape(-1)]=self.scaler[0].fit_transform(temp[~(data[:,:,-1]).bool().reshape(-1),:])
+        data[:,:,:-2]=temp.reshape(-1,self.n_part,self.n_dim-1)
+        temp=data[:,:,-2].reshape(-1,1)
+        temp[~(data[:,:,-1]).bool().reshape(-1)]=self.scaler[1].fit_transform(temp[~(data[:,:,-1]).bool().reshape(-1),:])
+        data[:,:,-2:-1]=temp.reshape(-1,self.n_part,1)
+        # self.std_mins=temp.min(0)[0]
+        # self.std_maxs=temp.max(0)[0]
+
         self.data = data.float()
         self.test_set =test_set.float()
 

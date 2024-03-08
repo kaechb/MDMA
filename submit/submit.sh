@@ -20,5 +20,5 @@ module load anaconda3/5.2
 . conda-init
 conda activate mdma-cfm
 cd /home/$USER/MDMACalo/
-python3 main_old.py jet
+python3 main.py jet
 

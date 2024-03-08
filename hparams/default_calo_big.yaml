@@ -5,7 +5,7 @@ L2: false
 adversarial: true
 amp: false
 augmentation: false
-batch_size: 64
+batch_size: 32
 bins:
   - 100
   - 45
@@ -37,8 +37,9 @@ lambda_gp: 10
 lambda_response: 0.1
 lr: 0.000001
 max: true
-max_epochs: 2000
+max_epochs: 500
 mean_field_loss: true
+middle: false
 model: MDMA
 n_dim: 4
 name: calo
@@ -48,8 +49,8 @@ names:
   - alpha
   - R
 noise: false
-num_R: 9
-num_alpha: 16
+num_R: 18
+num_alpha: 50
 num_layers: 3
 num_layers_gen: 4
 num_z: 45

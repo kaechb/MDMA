@@ -5,7 +5,7 @@ bins:
   - 100
   - 100
   - 100
-ckpt: ''
+ckpt: 'ckpts/t_tf.ckpt'
 cond_dim: 0
 dataset: jet
 decay: 0.999
@@ -18,7 +18,7 @@ gan: lsgan
 gp: false
 hidden: 128
 l_dim: 16
-lr: 0.0001
+lr: 0.00001
 max: true
 max_epochs: 4000
 mean_field_loss: true
@@ -26,7 +26,7 @@ model: TF
 n_dim: 3
 n_part: 30
 name: jet_tf
-noise: false
+noise: true
 norm: false
 num_heads: 16
 num_layers: 4

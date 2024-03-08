@@ -7,7 +7,7 @@ bins:
   - 100
   - 100
 ckpt: ''
-ckpt_flow: ./ckpts/t_nflow.ckpt
+ckpt_flow: ./ckpts/t_nf.ckpt
 cond_dim: 0
 context_features: 0
 coupling_hidden: 256

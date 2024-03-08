@@ -113,25 +113,21 @@ class TNF(pl.LightningModule):
         with torch.no_grad():
             z = self.flow.sample(len(batch)).reshape(-1, self.hparams.n_part, self.hparams.n_dim)
             z = z[:,:batch.shape[1],:]
-            if test:
-                kde_sample = self.kde.resample(int(len(batch) * 2)).T
-                n_sample = np.rint(kde_sample)
-                n_sample = (torch.tensor(n_sample[(n_sample >= 1) & (n_sample <= 150)]).cuda().long())
-                indices = torch.arange(self.hparams.n_part, device="cuda")
-                mask = indices.view(1, -1) < torch.tensor(n_sample).view(-1, 1)
-                mask = ~mask.bool()[: len(z)]
-                z[mask] = 0  # Since mean field is initialized by sum, we need to set the masked values to zero
+            z[mask] = 0  # Since mean field is initialized by sum, we need to set the masked values to zero
 
         fake = self.gen_net(z,mask=mask.clone(),)
         fake[mask] = 0  # set the masked values to zero
         if scale:
-            fake_scaled = self.scaler.inverse_transform(fake).float()
-            fake_scaled = fake_scaled.clamp(self.scaled_mins[:-1], self.scaled_maxs[:-1])
+            fake=fake.reshape(-1,self.hparams.n_part,self.hparams.n_dim)
+            std_fake=fake[:,:,:2]
+            pt_fake=fake[:,:,-1:]
+            std_fake= self.scaler.inverse_transform(std_fake)
+            pt_fake= self.pt_scaler.inverse_transform(pt_fake)
+            fake=torch.cat([std_fake,pt_fake],dim=2)
             # fake_scaled[fake_scaled[:,:,2]<1e-4,:]=0
-            assert (
-                fake_scaled.reshape(-1, self.hparams.n_dim).max(0)[0]<= self.scaled_maxs[: self.hparams.n_dim]).all()
-            # fake_scaled[mask] = 0  # set the masked values
-            return fake_scaled, None
+
+            # fake[mask] = 0  # set the masked values
+            return fake, None
         else:
             return fake
 
@@ -371,8 +367,8 @@ class TNF(pl.LightningModule):
 
         self.log("fpd", fpd_log, on_step=False, prog_bar=False, logger=True)
     def on_test_epoch_start(self, *args, **kwargs):
-        self.gen_net.eval()
-        self.flow.eval()
+        self.gen_net.train()
+        self.flow.train()
         self.n_kde=self.data_module.n_kde
         self.m_kde=self.data_module.m_kde
     def test_step(self, batch, batch_idx):

@@ -9,7 +9,7 @@ bins:
   - 100
   - 100
   - 100
-ckpt: false
+ckpt: "ckpts/t_pf.ckpt"
 ckpt_flow: ''
 cond_dim: 1
 context_features: 5

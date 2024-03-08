@@ -12,7 +12,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import BatchSampler, DataLoader, Dataset
 
 #from preprocess import ScalerBase,DQ,LogitTransformer
-from preprocess_new import (DQ, DQLinear, LogitTransformer, ScalerBaseNew,
+from utils.preprocess import (DQ, DQLinear, LogitTransformer, ScalerBase,
                             SqrtTransformer)
 
 class BatchIterator:
@@ -122,7 +122,7 @@ def pad_collate_fn(batch,avg_n):
     padded_batch =pad_sequence(batch, batch_first=True, padding_value=0.0)[:,:,:4].float()
     mask = ~(torch.arange(max_len).expand(len(batch), max_len) < torch.tensor([len(sample) for sample in batch]).unsqueeze(1))
     E=(torch.stack(E).log()-10).float()
-    cond=torch.cat((E.unsqueeze(-1),mask.sum(1).unsqueeze(-1).unsqueeze(-1)/avg_n),dim=-1)
+    cond=torch.cat((E.unsqueeze(-1).unsqueeze(-1),mask.sum(1).unsqueeze(-1).unsqueeze(-1)/avg_n),dim=-1)
     return padded_batch,mask,cond
 
 
@@ -179,56 +179,62 @@ class PointCloudDataloader(pl.LightningDataModule):
         self.new=True if name.find("new")>-1 else False
         self.scaler_path=scaler_path
         self.dataset="middle" if middle else "big"
-
+        self.mins=torch.tensor([[-3.3306, -8.5344, -6.3496, -5.8907]])#these are the minimums of the scaled data, this is used for plotting
+        self.maxs=torch.tensor([[3.7937, 9.5630, 6.3497, 6.5893]])#these are the maxmums of the scaled data, this is used for plotting
+        self.avg_n=1587.93468#these are the average number of particles per cloud, used to scale the condition
+        self.n_kde=None
+        self.m_kde=None
         super().__init__()
 
     def setup(self, stage ):
         # This just sets up the dataloader, nothing particularly important. it reads in a csv, calculates mass and reads out the number particles per jet
         # And adds it to the dataset as variable. The only important thing is that we add noise to zero padded jets
-        self.data=torch.load(f"/beegfs/desy/user/kaechben/calochallenge/pc_train_{self.dataset}_new_linear.pt")
-        self.E=self.data["energies"]
-        self.data=self.data["data"]
-        self.val_data=torch.load(f"/beegfs/desy/user/kaechben/calochallenge/pc_test_{self.dataset}_new_linear.pt")
-        self.test_E=self.val_data["energies"]
-        self.test_data=self.val_data["data"]
-        self.val_E=self.val_data["energies"][:self.batch_size*100]
-        self.val_data=self.val_data["data"][:self.batch_size*100]
+        self.data=torch.load(f"/beegfs/desy/user/kaechben/calochallenge/pc_train_{self.dataset}.pt")
+        self.E=self.data["Egen"]
+        self.data=self.data["E_z_alpha_r"]
+        self.val_data=torch.load(f"/beegfs/desy/user/kaechben/calochallenge/pc_test_{self.dataset}.pt")
+        self.test_E=self.val_data["Egen"]
+        self.test_data=self.val_data["E_z_alpha_r"]
+        self.val_E=self.val_data["Egen"][:self.batch_size*100]
+        self.val_data=self.val_data["E_z_alpha_r"][:self.batch_size*100]
 
         self.num_batches = len(self.data)//self.batch_size
-        self.scaler = ScalerBaseNew(
-                        transfs=[],
+        self.scaler = ScalerBase(
+                        transfs=[PowerTransformer(method="box-cox", standardize=True),
+                            Pipeline([('dequantization', DQLinear(name=self.name)),('minmax_scaler', MinMaxScaler(feature_range=(1e-5, 1-1e-5))),('logit_transformer', LogitTransformer()),("standard_scaler",StandardScaler())]),
+                        ],
                         featurenames=["E", "z", "alpha", "r"],
                         name=self.dataset,
-                        data_dir="./" if not self.scaler_path else self.scaler_path,
+                        data_dir="./",
                         overwrite=False)
         del self.scaler.transfs[1].steps[0]
         self.mins=torch.ones(4).unsqueeze(0)
         self.maxs=torch.ones(4).unsqueeze(0)
         n=[]
-        for d in self.data:
-            self.mins=torch.cat((self.mins,d.reshape(-1,4).min(0,keepdim=True)[0])).min(0,keepdim=True)[0]
-            self.maxs=torch.cat((self.maxs,d.reshape(-1,4).max(0,keepdim=True)[0])).max(0,keepdim=True)[0]
-            n.append(len(d))
-        self.avg_n=float(sum(n)/len(n))
+        # for d in self.data:
+        #     self.mins=torch.cat((self.mins,d.reshape(-1,4).min(0,keepdim=True)[0])).min(0,keepdim=True)[0]
+        #     self.maxs=torch.cat((self.maxs,d.reshape(-1,4).max(0,keepdim=True)[0])).max(0,keepdim=True)[0]
+        #     n.append(len(d))
+        # self.avg_n=float(sum(n)/len(n))
         if self.max:
             self.train_iterator = BucketBatchSamplerMax(
                                 self.data,
                                 batch_size = self.batch_size,
                                 drop_last=True,
-                                max_tokens_per_batch=30000,
+                                max_tokens_per_batch=80000,
                                 shuffle=True
                                 )
             self.val_iterator = BucketBatchSamplerMax(
                                 self.val_data,
                                 batch_size = self.batch_size,
-                                max_tokens_per_batch=30000,
+                                max_tokens_per_batch=80000,
                                 drop_last=False,
                                 shuffle=False
                                 )
             self.test_iterator = BucketBatchSamplerMax(
                                 self.test_data,
-                                batch_size = self.batch_size*10,
-                                max_tokens_per_batch=30000,
+                                batch_size = self.batch_size,
+                                max_tokens_per_batch=500000,
                                 drop_last=False,
                                 shuffle=False
                                 )
@@ -250,14 +256,14 @@ class PointCloudDataloader(pl.LightningDataModule):
             self.test_iterator = BatchIterator(
                                 self.test_data,
                                 batch_size = self.batch_size*10,
-                                max_tokens_per_batch=300000,
+                                max_tokens_per_batch=30000000,
                                 drop_last=False,
-                                shuffle=True
+                                shuffle=False
                                 )
 
         self.train_dl = DataLoader(CustomDataset(self.data,self.E), batch_sampler=self.train_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=16)
         self.val_dl = DataLoader(CustomDataset(self.val_data,self.val_E), batch_sampler=self.val_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=16)
-        self.test_dl = DataLoader(CustomDataset(self.test_data,self.test_E), batch_sampler=self.test_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=16)
+        self.test_dl = DataLoader(CustomDataset(self.test_data,self.test_E), batch_sampler=self.test_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=40)
 
     def train_dataloader(self):
         return self.train_dl# DataLoader(self.data, batch_size=10, shuffle=False, num_workers=1, drop_last=False,collate_fn=point_cloud_collate_fn)
@@ -269,12 +275,25 @@ class PointCloudDataloader(pl.LightningDataModule):
         return self.test_dl
 if __name__=="__main__":
 
-    loader=PointCloudDataloader("big_new_linear",64,max=False,augmentation=False)
+    loader=PointCloudDataloader("middle",64,max=False,augmentation=False,scaler_path="./scaler_middle.gz")
     loader.setup("train")
-    print(loader.avg_n)
-    raise
-    mins=torch.ones(4).unsqueeze(0)
-    for i in loader.train_dataloader():
-            mins=torch.min(torch.cat((mins,i[0][~i[1]].min(0,keepdim=True)[0]),dim=0),dim=0)[0].unsqueeze(0)
 
-            assert (i[0]==i[0]).all()
+    mins=torch.ones(4).unsqueeze(0)
+    responses=[]
+    import matplotlib.pyplot as plt
+    for i in loader.train_dataloader():
+        batch,mask,cond=i
+        batch[~mask]=loader.scaler.inverse_transform(batch[~mask])
+        batch[mask]=0
+        response=batch[:,:,0].sum(1)/((cond[:,0,0]+10).exp())
+        responses.append(response)
+    plt.hist(torch.cat(responses).detach().numpy(),bins=100)
+    plt.savefig("response.png")
+    responses=[]
+    plt.close()
+    for i in loader.val_dataloader():
+        batch,mask,cond=i
+        response=batch[:,:,0].sum(1)/((cond[:,0,0]+10).exp())
+        responses.append(response)
+    plt.hist(torch.cat(responses).detach().numpy(),bins=100)
+    plt.savefig("response_val.png")

@@ -21,7 +21,7 @@ E_loss: false
 ema: true
 ema_start: 50000
 frequencies: 8
-exact: false
+exact: true
 glu: true
 heads: 8
 hidden_dim: 1024
@@ -31,7 +31,7 @@ latent: 64
 layers: 8
 lr: 0.00001
 max: true
-max_epochs: 2000
+max_epochs: 500
 model: FM
 middle: false
 n_dim: 4

@@ -1,5 +1,5 @@
 avg_n: 70
-E_loss: true
+E_loss: false
 L2: false
 'N': 1
 adversarial: true
@@ -37,8 +37,9 @@ lambda_gp: 10
 lambda_response: 0.1
 lr: 0.0001
 max: false
-max_epochs: 2000
+max_epochs: 500
 mean_field_loss: true
+middle: true
 model: MDMA
 n_dim: 4
 name: calo

@@ -110,19 +110,23 @@ class NF(pl.LightningModule):
                     break
                 traceback.print_exc()
                 pass
-        fake=fake.reshape(-1,3)
-        fake[fake[:,2].abs()<1e-4]=0
-        fake=fake.reshape(-1,self.n_part*self.n_dim)
-        if scale:
-            fake=self.scaler.inverse_transform(fake[:,:self.n_dim*self.n_part].reshape(-1,self.n_part,self.n_dim))
+
+        if scale or self.hparams.mass_loss :
+            fake=fake.reshape(-1,self.hparams.n_part,self.hparams.n_dim)
+            std_fake=fake[:,:,:2]
+            pt_fake=fake[:,:,-1:]
+            std_fake= self.scaler.inverse_transform(std_fake)
+            pt_fake= self.pt_scaler.inverse_transform(pt_fake)
+            fake=torch.cat([std_fake,pt_fake],dim=2)
+            mask=fake[:,:,2].abs()<1e-4
+            mask=mask.reshape(-1,self.hparams.n_part)
             fake[mask]=0
-            fake=fake.clamp(self.scaled_mins[:-1],self.scaled_maxs[:-1])
+            fake=fake.reshape(-1,self.hparams.n_part*self.hparams.n_dim)
+            # fake=fake.clamp(self.scaled_mins[:-1],self.scaled_maxs[:-1])
         if self.hparams.mass_loss:
-            m_f=mass(self.scaler.inverse_transform(fake.reshape(-1,self.n_part,self.n_dim))).reshape(-1)
-            m_f=m_f.clamp(self.scaled_mins[-1],self.scaled_maxs[-1])
+            m_f=mass(fake.reshape(-1,self.hparams.n_part,self.hparams.n_dim)).reshape(-1)
         else:
             m_f=None
-
         return fake,m_f
 
     def configure_optimizers(self):
@@ -141,7 +145,15 @@ class NF(pl.LightningModule):
         batch=batch.reshape(-1,self.n_dim*self.n_part)
 
         if self.hparams.context_features==1:
-            cond=mass(self.scaler.inverse_transform(batch.reshape(-1,self.n_part,self.n_dim))).reshape(-1,1)#
+            scaled_batch=batch.clone().reshape(-1,self.n_part,self.n_dim)
+            std_batch=scaled_batch[:,:,:2]
+            pt_batch=scaled_batch[:,:,-1:]
+            std_batch= self.scaler.inverse_transform(std_batch)
+            pt_batch= self.pt_scaler.inverse_transform(pt_batch)
+            scaled_batch=torch.cat([std_batch,pt_batch],dim=2)
+            # scaled_batch[~mask,-1:]= self.pt_scaler.inverse_transform(scaled_batch[~mask,-1:])
+            cond=mass(scaled_batch).reshape(-1,1)#
+
         elif self.hparams.context_features==0:
             cond=None
         # This is the mass constraint, which constrains the flow to generate events with a mass which is the same as the mass it has been conditioned on, we can choose to not calculate this when we work without mass constraint to make training faster
@@ -149,14 +161,15 @@ class NF(pl.LightningModule):
         g_loss = -self.flow.log_prob(batch,cond if self.hparams.context_features else None).mean()/(self.n_dim*self.n_part)
         self.log("logprob", g_loss, on_step=True, on_epoch=False, prog_bar=False, logger=True)
         #some conditions on when we want to actually add the mass loss to our training loss, if we dont add it, it is as it wouldnt exist
-        if self.hparams.mass_loss  :
-                gen,mf=self.sampleandscale(batch,cond=cond)
-                mloss=FF.mse_loss(mf.reshape(-1),cond.reshape(-1))
-                assert not torch.any(mf.isnan()) or not torch.any(self.m.isnan())
-                self.log("mass_loss", mloss, on_step=True, on_epoch=False, prog_bar=True, logger=True)
-
-                g_loss+=self.hparams.lambda_m*mloss
-                self.log("combined_loss", g_loss, on_epoch=True, prog_bar=True, logger=True)
+        if self.hparams.mass_loss and self.current_epoch>0 :
+            gen,mf=self.sampleandscale(batch,cond=cond)
+            mloss=FF.mse_loss(mf.reshape(-1),cond.reshape(-1))
+            assert not torch.any(mf.isnan()) or not torch.any(self.m.isnan())
+            self.log("mass_loss", mloss, on_step=True, on_epoch=False, prog_bar=True, logger=True)
+            self.log("cond",cond.mean(),on_step=True, on_epoch=False, prog_bar=True, logger=True)
+            self.log("mf",mf.mean(),on_step=True, on_epoch=False, prog_bar=True, logger=True)
+            g_loss+=self.hparams.lambda_m*mloss
+            self.log("combined_loss", g_loss, on_epoch=True, prog_bar=True, logger=True)
 
         return OrderedDict({"loss":g_loss})
 
@@ -175,7 +188,15 @@ class NF(pl.LightningModule):
 
                 batch[mask]=0
                 cond=mass(batch).reshape(-1,1)
-                logprob=-self.flow.log_prob(self.scaler.transform(batch.reshape(-1,self.n_part,self.n_dim,)).reshape(-1,self.n_part*self.n_dim)/(self.n_dim*self.n_part),cond if self.hparams.context_features else None).mean()/(self.n_dim*self.n_part)
+                scaled_batch=batch.clone()
+                std_batch=scaled_batch[:,:,:2]
+                pt_batch=scaled_batch[:,:,-1:]
+
+                std_batch= self.scaler.inverse_transform(std_batch)
+                pt_batch= self.pt_scaler.inverse_transform(pt_batch)
+                scaled_batch=torch.cat([std_batch,pt_batch],dim=2)
+
+                logprob=-self.flow.log_prob(scaled_batch.reshape(-1,self.n_dim*self.n_part),cond if self.hparams.context_features else None).mean()/(self.n_dim*self.n_part)
                 self.log("val_logprob",logprob, logger=True)
 
                 self.w1ps = []
@@ -245,7 +266,7 @@ class NF(pl.LightningModule):
         self.log("fpd", fpd_log, on_step=False, prog_bar=False, logger=True)
 
     def on_test_epoch_start(self, *args, **kwargs):
-        self.flow.eval()
+        self.flow.train()
         self.n_kde=self.data_module.n_kde
         self.m_kde=self.data_module.m_kde
     def test_step(self, batch, batch_idx):
@@ -267,13 +288,14 @@ class NF(pl.LightningModule):
                     n=n[:len(batch)]
                     mask=create_mask(n).cuda()
                     cond=m.cuda().float()
+                    cond=mass(batch).reshape(-1,1)
                 else:
                     n,_=sample_kde(len(batch)*10,self.n_kde,self.m_kde)
                     mask=create_mask(n).cuda()
                     start=time.time()
 
                 mask=mask[:len(batch)]
-
+                #cond=mass(batch).reshape(-1,1)
                 #self.log("test_logprob",logprob, logger=True)
 
                 self.w1ps = []

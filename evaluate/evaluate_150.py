@@ -68,35 +68,7 @@ def sample_kde(n,n_kde,m_kde=False):
     else:
         return nhat
 
-def setup_model_with_data(model, data_module, config):
-    """
-    Sets up the model with the data module and configuration parameters.
 
-    :param model: The model to be set up.
-    :param data_module: The data module used for training and validation.
-    :param config: Configuration dictionary.
-    """
-    model.bins = [100, 100, 100, 100]
-    model.n_dim = 3
-    model.scaler = data_module.scaler
-    model.w1m_best = 0.01
-    model.min_pt = data_module.min_pt
-    model.max_pt = data_module.max_pt
-
-    # Calculate the minimum and maximum values from the training data
-    mins, maxs, n_counts = calculate_data_bounds(data_module.train_dataloader(), config["n_dim"])
-    model.maxs = maxs.cuda().reshape(-1)
-    model.mins = mins.cuda().reshape(-1)
-    model.avg_n = torch.cat(n_counts, dim=0).float().cuda().mean()
-    if hasattr(model,"gen_net"):
-        model.gen_net.avg_n =model.avg_n
-    # Additional model settings
-
-    model.scaler = model.scaler.to("cuda")
-    model.scaler.std = model.scaler.std.cuda()
-    model.scaled_mins = torch.tensor(data_module.mins).cuda()[:3]
-    model.scaled_maxs = torch.tensor(data_module.maxs).cuda()[:3]
-    print(model.scaled_mins, model.scaled_maxs)
 
 def calculate_data_bounds(dataloader, n_dim):
     """
@@ -156,7 +128,8 @@ def make_plots(model_name,data_module, disco=False):
         model.w1m_best = 0.01
 
         # Initialize data module and set up model
-        model.scaler=data_module.scaler.to("cuda")
+        model.scaler = data_module.scaler[0].to("cuda")
+        model.pt_scaler=data_module.scaler[1]
         model.scaled_mins = torch.tensor(data_module.mins).cuda()[:3]
         model.scaled_maxs = torch.tensor(data_module.maxs).cuda()[:3]
         model.batch=[]
@@ -171,12 +144,6 @@ def make_plots(model_name,data_module, disco=False):
                 devices=1,
                 precision=32,
                 accelerator="gpu",
-                gradient_clip_val=0.5 if config["model"] == "FM" else None,
-                log_every_n_steps=100,
-                max_epochs=config["max_epochs"],
-                val_check_interval=None,
-                check_val_every_n_epoch=250 if  (config["ckpt"]=="" and config["dataset"]=="jet") else 100 if (config["dataset"] == "jet") else None  ,
-                num_sanity_val_steps=1,
 
                 enable_progress_bar=False,
                 default_root_dir="/gpfs/dust/maxwell/user/{}/{}".format(
@@ -186,12 +153,15 @@ def make_plots(model_name,data_module, disco=False):
         start=time.time()
         true=data_module.real_test[...,:-1]
         with torch.no_grad():
-
             trainer.test(model=model,dataloaders=data_module.test_dataloader())
         fake= torch.cat([torch.nn.functional.pad(batch, (0, 0, 0, model.hparams.n_part - batch.size(1))) for batch in model.fake],dim=0) if model.hparams.max else torch.cat(model.fake)
         sorted_indices = torch.argsort(fake[:,:,2], dim=1, descending=True)
         fake = torch.gather(fake, 1, sorted_indices.unsqueeze(-1).expand(-1, -1, fake.shape[2]))
-        fake = torch.clamp(fake, min=true.reshape(-1, 3).min(), max=data_module.real_test[...,:3].reshape(-1, 3).max())
+        mins=true.reshape(-1, 3).min()
+
+        maxs=true.reshape(-1, 3).max()
+        fake = torch.clamp(fake, min=mins, max=maxs)
+        true = torch.clamp(true, min=mins, max=maxs)
         with open("/beegfs/desy/user/kaechben/thesis/eval_jetnet150/{}_jets.npy".format(model_name), "wb") as f:
             np.save(f,fake.cpu().numpy())
         total=(time.time()-start)/500000.
@@ -222,7 +192,7 @@ def make_plots(model_name,data_module, disco=False):
 
 def calc_metrics(true,train,time_dict,param_dict):
 
-    for i,model_name in enumerate(["jetnet150_fm","mdma_jet","EPiC-FM","EPiC-GAN","IN",]):#mdma_jet
+    for i,model_name in enumerate(["mdma_jet","jetnet150_fm","EPiC-FM","EPiC-GAN","IN",]):#mdma_jet
         if model_name=="IN":
             fake=train
         else:
@@ -234,10 +204,12 @@ def calc_metrics(true,train,time_dict,param_dict):
         # Apply clamping based on quantiles
         mins = torch.quantile(true.reshape(-1, 3), 0.0, dim=0)
         maxs = torch.quantile(true.reshape(-1, 3), 1, dim=0)
+        mins[0]=-1
+        maxs[0]=1
         fake = torch.clamp(fake, min=mins, max=maxs)
-        # true = torch.clamp(true, min=mins, max=maxs)
-        m_f = torch.clamp(m_f, min=torch.quantile(m_t, 0.001), max=torch.quantile(m_t, 0.999))
-        m_t = torch.clamp(m_t, min=torch.quantile(m_t, 0.001), max=torch.quantile(m_t, 0.999))
+        true = torch.clamp(true, min=mins, max=maxs)
+        m_f = torch.clamp(m_f, min=torch.quantile(m_t,0), max=torch.quantile(m_t,1))
+        m_t = torch.clamp(m_t, min=torch.quantile(m_t,0), max=torch.quantile(m_t,1))
         w1m_score = w1m(fake, true)
         real_fpd = get_fpd_kpd_jet_features(true[:50000], efp_jobs=40)
         w1efp_score = w1efp(fake[:50000], true)
@@ -249,7 +221,9 @@ def calc_metrics(true,train,time_dict,param_dict):
         # Prepare histograms
         mins=torch.cat((mins,m_f.min().unsqueeze(0)))
         maxs=torch.cat((maxs,m_f.max().unsqueeze(0)))
-        hists=get_hists([30,30,30,30],mins*1.1,maxs*1.1,calo=False)
+        mins[0]=-1
+        maxs[0]=1
+        hists=get_hists([50,50,50,50],mins-0.01,maxs+0.01,calo=False)
 
         # Fill histograms
         for var in range(3):
@@ -260,7 +234,7 @@ def calc_metrics(true,train,time_dict,param_dict):
 
         # Plotting
         plotter = plotting_thesis()
-        plotter.plot_ratio(hists["hists_real"], hists["hists_fake"], weighted=False, leg=2, model_name=model_name,n_part=150)
+        plotter.plot_ratio(hists["hists_real"], hists["hists_fake"], weighted=False, leg=2, model_name=model_name,n_part=150,log=True)
         df=pd.DataFrame(metrics)
         print(metrics)
         print(df)
@@ -406,7 +380,7 @@ if False:
     time_dict={}
     param_dict={}
 
-    for i,model_name in enumerate(["mdma_jet","jetnet150_fm","IN","EPiC-GAN","EPiC-FM"]):#
+    for i,model_name in enumerate(["mdma_jet","EPiC-FM","jetnet150_fm","IN","EPiC-GAN",]):#
         model,total,params=make_plots(model_name,data_module=data_module)
         time_dict[model_name]=total
         param_dict[model_name]=params

@@ -68,7 +68,7 @@ class MDMA(pl.LightningModule):
         self.gen_net.train()
         self.dis_net.train()
         # self.scaler.to(self.device)
-        hists=get_hists(self.hparams.bins,self.scaled_mins.reshape(-1)*0.99,self.scaled_maxs.reshape(-1)*1.01,calo=self.hparams.dataset=="calo")
+        hists=get_hists(self.hparams.bins,self.scaled_mins.reshape(-1)-0.01,self.scaled_maxs.reshape(-1)+0.01,calo=self.hparams.dataset=="calo")
         self.hists_real,self.hists_fake=hists["hists_real"],hists["hists_fake"]
         if self.hparams.dataset=="calo":
             self.weighted_hists_real,self.weighted_hists_fake=hists["weighted_hists_real"], hists["weighted_hists_fake"]
@@ -112,13 +112,19 @@ class MDMA(pl.LightningModule):
         fake[:,:,2] = -self.relu(self.maxs.reshape(-1)[2] - fake[:, :, 2]) + self.maxs.reshape(-1)[2]
         fake[mask] = 0  # set the masked values to zero
         if scale:
-
-            fake_scaled = self.scaler.inverse_transform(fake).float()
+            if self.hparams.dataset=="jet":
+                std_fake=fake[:,:,:2]
+                pt_fake=fake[:,:,-1:]
+                std_fake= self.scaler.inverse_transform(std_fake)
+                pt_fake= self.pt_scaler.inverse_transform(pt_fake)
+                fake=torch.cat([std_fake,pt_fake],dim=2)
+            else:
+                fake = self.scaler.inverse_transform(fake)
             if self.hparams.dataset=="calo":
-                fake_scaled[...,1:]=fake_scaled[...,1:].floor()
-                fake_scaled[:,:,2]=(fake_scaled[:,:,2]+torch.randint(0,self.num_alpha,(fake_scaled.shape[0],1),device=fake_scaled.device).expand(-1,mask.shape[1]))%self.num_alpha
-            fake_scaled[mask] = 0  # set the masked values to zero
-            return fake_scaled,None
+                fake[...,1:]=fake[...,1:].floor()
+                fake[:,:,2]=(fake[:,:,2]+torch.randint(0,self.num_alpha,(fake.shape[0],1),device=fake.device).expand(-1,mask.shape[1]))%self.hparams.bins[2]
+            fake[mask] = 0  # set the masked values to zero
+            return fake,None
         else:
             return fake
 
@@ -176,7 +182,9 @@ class MDMA(pl.LightningModule):
         self._log_dict["Training/pred_real_mean"]=pred_real.mean()
         self._log_dict["Training/pred_fake_mean"]=pred_fake.mean()
         d_loss=self.loss(pred_real.reshape(-1),pred_fake.reshape(-1),critic=True)
-        self.d_loss_mean = d_loss.detach() * 0.01 + 0.99 * self.d_loss_mean if not self.d_loss_mean is None else d_loss
+        if d_loss==d_loss:
+
+            self.d_loss_mean = d_loss.detach() * 0.01 + 0.99 * self.d_loss_mean if not self.d_loss_mean is None else d_loss
         self._log_dict["Training/d_loss"] = self.d_loss_mean
         if self.hparams.gp:
             gp = self._gradient_penalty(batch, fake.detach(), mask=mask, cond=cond)
@@ -196,7 +204,8 @@ class MDMA(pl.LightningModule):
         pred, mean_field_gen = self.dis_net(fake, mask=mask, weight=False, cond=cond)
         self._log_dict["Training/pred_fake_mean_gen"]=pred.mean()
         g_loss=self.loss(None,pred.reshape(-1),critic=False)
-        self.g_loss_mean = g_loss.detach() * 0.01 + 0.99 * self.g_loss_mean if not self.g_loss_mean is None else g_loss
+        if g_loss==g_loss:
+            self.g_loss_mean = g_loss.detach() * 0.01 + 0.99 * self.g_loss_mean if not self.g_loss_mean is None else g_loss
         if self.hparams.mean_field_loss and self.step<50000:
             mean_field = ((mean_field_gen-mean_field.detach())**2).mean()
             self._log_dict["Training/mean_field"] = mean_field
@@ -238,6 +247,7 @@ class MDMA(pl.LightningModule):
             if batch[0].shape[1]>0:
                 self._log_dict = {}
                 batch, mask, cond = batch[0], batch[1].bool(), batch[2]
+                batch[mask]=0
                 if self.hparams.dataset=="calo":
                     cond = cond.reshape(-1,1,2).float()
                 else:
@@ -248,8 +258,8 @@ class MDMA(pl.LightningModule):
                     self.fake.append(fake.cpu())
                     self.batch.append(batch.cpu())
                 else:
-                    response_real = (fake[:len(cond), :, 0].sum(1).reshape(-1) / (cond[:, :,0] + 10).exp().reshape(-1)).cpu().numpy().reshape(-1)
-                    response_fake = (batch[:, :, 0].sum(1).reshape(-1) / (cond[:, :,0] + 10).exp().reshape(-1)).cpu().numpy().reshape(-1)
+                    response_real = (fake[:len(cond), :, 0].sum(1).reshape(-1) / (cond[:, 0,0] + 10).exp().reshape(-1)).cpu().numpy().reshape(-1)
+                    response_fake = (batch[:, :, 0].sum(1).reshape(-1) / (cond[:, 0,0] + 10).exp().reshape(-1)).cpu().numpy().reshape(-1)
                     self.response_real.fill(response_real)
                     self.response_fake.fill(response_fake)
                 for i in range(self.hparams.n_dim):
@@ -374,6 +384,15 @@ class MDMA(pl.LightningModule):
         self.times=[]
         self.n_kde=self.data_module.n_kde
         self.m_kde=self.data_module.m_kde
+        hists=get_hists(self.hparams.bins,self.scaled_mins.reshape(-1),self.scaled_maxs.reshape(-1),calo=self.hparams.dataset=="calo")
+        self.hists_real,self.hists_fake=hists["hists_real"],hists["hists_fake"]
+        if self.hparams.dataset=="calo":
+            self.weighted_hists_real,self.weighted_hists_fake=hists["weighted_hists_real"], hists["weighted_hists_fake"]
+            self.response_real, self.response_fake = hists["response_real"], hists["response_fake"]
+
+
+        self.fake =[]
+        self.batch = []
     def test_step(self, batch, batch_idx):
         '''This calculates some important metrics on the hold out set (checking for overtraining)'''
 
@@ -386,17 +405,18 @@ class MDMA(pl.LightningModule):
 
 
                 batch[mask]=0
+                if self.hparams.dataset=="jet":
+                    n,_=sample_kde(len(batch)*10,self.n_kde,self.m_kde)
+                    mask=create_mask(n,size=self.hparams.n_part).cuda()
 
-                n,_=sample_kde(len(batch)*10,self.n_kde,self.m_kde)
-                mask=create_mask(n,size=self.hparams.n_part).cuda()
-
-                mask=mask[:len(batch)].bool()
-                cond=(~mask).sum(1).float().reshape(-1,1,1)/self.data_module.n_mean
+                    mask=mask[:len(batch)].bool()
+                    cond=(~mask).sum(1).float().reshape(-1,1,1)/self.data_module.n_mean
                 # mask=mask[:len(batch)]
 
                 self.w1ps = []
                 start=time.time()
                 fake,mf = self.sampleandscale(batch=batch, mask=mask, cond=cond, scale=True)
+
                 self.times.append((time.time()-start)/len(batch))
                 batch=batch.reshape(-1,batch.shape[1],self.n_dim)
                 fake=fake.reshape(-1,batch.shape[1],self.n_dim)
@@ -404,3 +424,18 @@ class MDMA(pl.LightningModule):
                 self.fake.append(fake.cpu())
                 self.masks.append(mask.cpu())
                 self.conds.append(cond.cpu())
+                if self.hparams.dataset=="calo":
+                    maxs=torch.tensor([6499, self.hparams.bins[1]-1,self.hparams.bins[2]-1,self.hparams.bins[3]-1],device=self.device)
+                    fake=torch.clamp(fake,torch.zeros_like(fake), maxs)
+                    response_real=(batch[:,:,0].sum(1).reshape(-1)/ (cond[:, 0,0] + 10).exp())
+                    response_fake=(fake[:,:,0].sum(1).reshape(-1)/ (cond[:, 0,0] + 10).exp())
+                    response_real=torch.clamp(response_real,0,1.99).cpu().numpy().reshape(-1)
+                    response_fake=torch.clamp(response_fake,0,1.99).cpu().numpy().reshape(-1)
+                    for i in range(self.n_dim):
+                        self.hists_real[i].fill(batch[~mask.squeeze(-1)][:, i].cpu().long().numpy())
+                        self.hists_fake[i].fill(fake[~mask.squeeze(-1)][:, i].cpu().long().numpy())
+                        if i>=1:
+                            self.weighted_hists_real[i-1].fill(batch[~mask.squeeze(-1)][:, i].cpu().long().numpy(),weight=batch[~mask.squeeze(-1)][:, 0].cpu().numpy())
+                            self.weighted_hists_fake[i-1].fill(fake[~mask.squeeze(-1)][:, i].cpu().long().numpy(),weight=fake[~mask.squeeze(-1)][:, 0].cpu().numpy())
+                    self.response_real.fill(response_real)
+                    self.response_fake.fill(response_fake)

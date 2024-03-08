@@ -49,6 +49,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 from my_cmaps import cmap
+from scipy.stats import boxcox
 def create_mask(n, size=30):
     # Ensure n is a 1D tensor
     n = n.flatten()
@@ -143,7 +144,7 @@ class plotting_thesis():
         # Plot variables and their names
         variables = [r"E",r"z",r"alpha",r"R"]
         names = [r"$E$",r"$z$",r"$\alpha$",r"$R$"]
-        ticks=[[0,1000,2000,3000,4000,5000,6000],[0,10,20,30,40],[0,5,10,15],[0,2,4,6,8]] if not self.big else [[0,1000,2000,3000,4000,5000,6000],[0,10,20,30,40],[0,10,20,30,40],[0,4,8,12,16]]
+        ticks=[[0,2000,4000,6000],[0,10,20,30,40],[0,5,10,15],[0,2,4,6,8]] if not self.big else [[0,2000,4000,6000],[0,10,20,30,40],[0,10,20,30,40],[0,4,8,12,16]]
         if weighted:
             FONTSIZE=FONTSIZE+3
             fig = plt.figure(figsize=self.fig_size3)
@@ -158,7 +159,7 @@ class plotting_thesis():
 
         for k, (variable, name,ticks) in enumerate(zip(variables, names,ticks)):
             inner_gs = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=outer_gs[k],
-                                                        height_ratios=[4, 1], hspace=0
+                                                        height_ratios=[4, 1], hspace=0.15
                                                         )
 
             # Create the main and ratio axes within the nested grid
@@ -221,8 +222,8 @@ class plotting_thesis():
                 ax_dict={"main_ax":ax[0],"ratio_ax":ax[1]},
                 rp_ylabel=r"Ratio",
                 bar_="blue",
-                rp_num_label="Generated",
-                rp_denom_label="Ground Truth",
+                rp_num_label="Ground Truth",
+                rp_denom_label="Generated",
                 rp_uncert_draw_type="line",  # line or bar
             )
         ax_main,ax_ratio=ax
@@ -258,7 +259,7 @@ class plotting_thesis():
         plt.savefig(f"plots/calo/response_{model_name}{self.big}.pdf",format="pdf")
         plt.show()
 
-    def plot_ratio(self,h_real,h_fake,weighted,leg=-1,model_name="",n_part=30):
+    def plot_ratio(self,h_real,h_fake,weighted,leg=-1,model_name="",n_part=30,log=False):
         i = 0
         k = 0
         FONTSIZE=20
@@ -276,15 +277,13 @@ class plotting_thesis():
 
         for k, (variable, name) in enumerate(zip(variables, names)):
             inner_gs = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=outer_gs[k],
-                                                        height_ratios=[4, 1], hspace=0
+                                                        height_ratios=[4, 1], hspace=0.15
                                                         )
 
             # Create the main and ratio axes within the nested grid
             ax_main = fig.add_subplot(inner_gs[0])
             ax_ratio = fig.add_subplot(inner_gs[1], sharex=ax_main)
             ax_main.tick_params(axis='x', which='both', length=0, labelbottom=False)
-
-
             # Plotting logic
             h_real[k].plot_ratio(
                 h_fake[k],
@@ -300,16 +299,16 @@ class plotting_thesis():
             ax_ratio.set_ylabel("Ratio", fontsize=FONTSIZE)
             ax_main.get_legend().remove()
             ax_ratio.set_ylim(0.5, 1.5)
+            ax_ratio.set_yticks([0.5, 1, 1.5])
             ax_main.set_xlabel("")
-
             ax_main.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
-            ax_ratio.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
-
-            locator=MaxNLocator( nbins=6, prune="both")
-            ax_main.yaxis.set_major_locator(locator)
+            # ax_ratio.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
+            # locator=MaxNLocator( nbins=6, prune="both")
+            # ax_main.yaxis.set_major_locator(locator)
             ax_main.patches[0].set_fill(True)
             ax_main.patches[0].set_alpha(self.alpha)
-
+            if k==2 or log and k!=3:
+                ax_main.set_yscale("log")
             # ax_main.patches[1].set_fc(sns.color_palette()[0])
             # ax_main.patches[0].set_fc(sns.color_palette()[1])
             ax_main.patches[0].set_edgecolor("black")
@@ -675,6 +674,9 @@ class plotting_point_cloud():
             ax[1, k].set_xlabel(name)
             ax[0, k].set_ylabel("Counts")
             ax[1, k].set_ylabel("Ratio")
+            if k!=3:
+
+                ax[0,k].set_yscale("log")
             ax[0, k].patches[0].set_lw(2)
             ax[0, k].get_legend().remove()
             k += 1
@@ -749,8 +751,8 @@ def get_hists(bins,mins,maxs,calo=False,ema=False,min_response=0,max_response=10
     if calo:
         hists["weighted_hists_real"] = []
         hists["weighted_hists_fake"] = []
-        hists["response_real"]=hist.Hist(hist.axis.Regular(bins[0], min_response, max_response))
-        hists["response_fake"]=hist.Hist(hist.axis.Regular(bins[0], min_response, max_response))
+        hists["response_real"]=hist.Hist(hist.axis.Regular(bins[0], 0., 2,underflow=True,overflow=True,flow=True))
+        hists["response_fake"]=hist.Hist(hist.axis.Regular(bins[0], 0., 2,underflow=True,overflow=True,flow=True))
 
         hists["hists_real"].append(hist.Hist(hist.axis.Regular(bins[0], 0, 6500)))
         hists["hists_fake"].append(hist.Hist(hist.axis.Regular(bins[0], 0, 6500)))
@@ -762,11 +764,12 @@ def get_hists(bins,mins,maxs,calo=False,ema=False,min_response=0,max_response=10
             hists["weighted_hists_real"].append(hist.Hist(hist.axis.Integer(0, n)))
             hists["weighted_hists_fake"].append(hist.Hist(hist.axis.Integer(0, n)))
     else:
+            i=0
             for n,mi,ma in zip(bins,mins,maxs):
-                if n==3:
-                    mi=0
-                hists["hists_real"].append(hist.Hist(hist.axis.Regular(n,mi, ma,underflow=True,overflow=True)))
-                hists["hists_fake"].append(hist.Hist(hist.axis.Regular(n,mi, ma,underflow=True,overflow=True)))
+                mi-=1e-5
+                ma+=1e-5
+                hists["hists_real"].append(hist.Hist(hist.axis.Regular(n,mi, ma,underflow=True,overflow=True,flow=True)))
+                hists["hists_fake"].append(hist.Hist(hist.axis.Regular(n,mi, ma,underflow=True,overflow=True,flow=True)))
 
     return hists
 
@@ -818,3 +821,75 @@ class MultiheadL2Attention(nn.Module):
         attention_output = attention_output.reshape(batch_size, -1, self.num_heads * self.head_dim)
 
         return self.out(attention_output), None
+
+import torch
+import torch.nn as nn
+
+class BoxCoxTransformer(nn.Module):
+    def __init__(self, lambda_param=None, epsilon=1e-6):
+        """
+        Box-Cox Transformer as a PyTorch module.
+
+        Parameters:
+        lambda_param (float): The lambda parameter for the Box-Cox transformation. If None, it will be estimated.
+        epsilon (float): Small value to ensure positivity.
+        """
+        super(BoxCoxTransformer, self).__init__()
+        # Lambda could be a learned parameter or set during fitting
+        self.lambda_param = lambda_param
+        self.epsilon = epsilon
+        self.mean=None
+        self.std=None
+    def fit(self, x):
+        # Placeholder for a fit method if lambda is to be determined from data
+        # For true fitting, statistical methods to find lambda should be used
+        x_np = x.detach().cpu().numpy().reshape(-1)
+        _, fitted_lambda = boxcox(x_np + self.epsilon)  # Adjust with epsilon to ensure positivity
+        self.lambda_param = torch.tensor(fitted_lambda, dtype=torch.float32)
+
+
+    def fit_transform(self, x):
+        """
+        Fit the Box-Cox transformation to the input data and apply the transformation.
+
+        Parameters:
+        x (Tensor): Input data to fit and transform.
+
+        Returns:
+        Tensor: Transformed data.
+        """
+        self.fit(x)
+        return self.transform(x)
+    def transform(self, x):
+        """
+        Apply the Box-Cox transformation to the input data.
+
+        Parameters:
+        x (Tensor): Input data to transform.
+
+        Returns:
+        Tensor: Transformed data.
+        """
+
+        x_adj = x + self.epsilon  # Ensure x > 0
+        y = (torch.pow(x_adj, self.lambda_param) - 1) / self.lambda_param
+        if self.mean is None:
+            self.mean=y.mean()
+            self.std=y.std()
+        y= (y-self.mean)/self.std
+        return y
+
+    def inverse_transform(self, y):
+        """
+        Apply the inverse Box-Cox transformation to the input data.
+
+        Parameters:
+        y (Tensor): Input data to inverse transform.
+
+        Returns:
+        Tensor: Original data before transformation.
+        """
+        y = (y*self.std)+self.mean
+        x_adj = (y * self.lambda_param) + 1
+        x = torch.pow(x_adj, 1 / self.lambda_param) - self.epsilon
+        return x

@@ -88,15 +88,6 @@ class TF(pl.LightningModule):
         """needed for lightning training to work, it just sets the dataloader for training and validation"""
         self.data_module = data_module
 
-    def transform(self,x):
-        # boxcox transform for energy for calochallenge
-        x=(x**self.power_lambda-1)/self.power_lambda
-        return (x-self.mean)/self.scale
-
-    def inverse_transform(self,x):
-        # inverse boxcox transform for energy for calochallenge
-        return ((x*self.scale+self.mean)*self.power_lambda+1)**(1/self.power_lambda)
-
     def sampleandscale(self, batch, mask, cond, scale=False,test=False):
         """Samples from the generator and optionally scales the output back to the original scale"""
         # Since mean field is initialized by sum, we need to set the masked values to zero
@@ -110,10 +101,13 @@ class TF(pl.LightningModule):
         fake[mask] = 0  # set the masked values to zero
         if scale:
 
-            fake_scaled = self.scaler.inverse_transform(fake).float()
-
-            fake_scaled[mask] = 0  # set the masked values
-            return fake_scaled,None
+            fake=fake.reshape(-1,self.hparams.n_part,self.hparams.n_dim)
+            std_fake=fake[:,:,:2]
+            pt_fake=fake[:,:,-1:]
+            std_fake= self.scaler.inverse_transform(std_fake)
+            pt_fake= self.pt_scaler.inverse_transform(pt_fake)
+            fake=torch.cat([std_fake,pt_fake],dim=2)
+            return fake,None
         else:
             return fake
 
@@ -230,10 +224,8 @@ class TF(pl.LightningModule):
             if batch[0].shape[1]>0:
                 self._log_dict = {}
                 batch, mask, cond = batch[0], batch[1], batch[2]
-                if self.hparams.dataset=="calo":
-                    cond = cond.reshape(-1,1,2).float()
-                else:
-                    cond=cond.reshape(-1,1,1).float()
+
+                cond=cond.reshape(-1,1,1).float()
                 self.w1ps = []
                 start=time.time()
                 fake,_ = self.sampleandscale(batch=batch, mask=mask, cond=cond, scale=True)
@@ -249,19 +241,6 @@ class TF(pl.LightningModule):
                         self.hists_fake[i].fill(fake[~mask][:, i].cpu().numpy())
                     self.hists_real[-1].fill(mass(batch).cpu().numpy())
                     self.hists_fake[-1].fill(mass(fake[:len(batch)]).cpu().numpy())
-                else:
-                    response_real = (fake[:len(cond), :, 0].sum(1) / (cond[:, :,0] + 10).exp()).cpu().numpy().reshape(-1)
-                    response_fake = (batch[:, :, 0].sum(1) / (cond[:, :,0] + 10).exp()).cpu().numpy().reshape(-1)
-                    self.response_real.fill(response_real)
-                    self.response_fake.fill(response_fake)
-                    for i in range(self.hparams.n_dim):
-                        self.hists_real[i].fill(batch[~mask][:,i].cpu().numpy())
-                        self.hists_fake[i].fill(fake[:len(batch)][~mask][:,i].cpu().numpy())
-                        if self.name=="calo" and i>0:
-                            self.weighted_hists_fake[i-1].fill(fake[:len(batch)][~mask][:,i].cpu().numpy(),weight=fake[:len(batch)][~mask][:,0].cpu().numpy())
-                            self.weighted_hists_real[i-1].fill(batch[~mask][:,i].cpu().numpy(),weight=batch[~mask][:,0].cpu().numpy())
-
-            #self.fill_hist(real=batch, fake=fake)
 
 
 
@@ -285,8 +264,8 @@ class TF(pl.LightningModule):
         """calculates some metrics and logs them"""
         # calculate w1m 10 times to stabilize for ckpting
 
-        w1m_ = w1m(real,fake,num_batches=16,num_eval_samples=250000)[0]
-        print(w1m_)
+        w1m_ = w1m(real,fake)[0]
+
         fpd_log = 10
         self.log("w1m", w1m_, on_step=False, prog_bar=False, logger=True, on_epoch=True)
         if w1m_ < self.w1m_best * 1.2:  #
@@ -310,62 +289,8 @@ class TF(pl.LightningModule):
 
 
 
-    def calo_evaluation(self,):
-        w1ps = []
-        weighted_w1ps = []
-        plot=False
-        if not hasattr(self, "min_w1p") or not hasattr(self, "min_z"):
-            self.min_w1p = 10
-            self.min_z=0.01
-        for i in range(4):
-            cdf_fake = self.hists_fake[i].values().cumsum()
-            cdf_real = self.hists_real[i].values().cumsum()
-            cdf_fake /= cdf_fake[-1]
-            cdf_real /= cdf_real[-1]
-            w1p = np.mean(np.abs(cdf_fake - cdf_real))
-            w1ps.append(w1p)
-            if i!=0:
-                self.log("features/"+self.hparams.names[i], w1p, on_step=False, on_epoch=True)
-                weighted_cdf_fake = self.hists_fake[i].values().cumsum()
-                weighted_cdf_real = self.hists_real[i].values().cumsum()
-                weighted_cdf_fake /= weighted_cdf_fake[-1]
-                weighted_cdf_real /= weighted_cdf_real[-1]
-                weighted_w1p = np.mean(np.abs(weighted_cdf_fake - weighted_cdf_real))
-                weighted_w1ps.append(weighted_w1p)
-                self.log("features/"+self.hparams.names[i] + "_weighted", weighted_w1p, on_step=False, on_epoch=True)
-            if i==1:
-                self.log("weighted_z", weighted_w1p, on_step=False, on_epoch=True)
-                if weighted_w1p<self.min_z:
-                    self.min_z=weighted_w1p
-                    plot=True
-            if i==0:
-                self.log("features_E", w1p, on_step=False, on_epoch=True)
-                if np.mean(w1p) < self.minE:
-                    self.minE = w1p
-                    plot=True
-        self.log("w1p", np.mean(w1ps), on_step=False, on_epoch=True)
-        self.log("weighted_w1p", np.mean(weighted_w1ps), on_step=False, on_epoch=True)
-        try:
-            if np.mean(w1ps) < self.min_w1p:
-                    self.min_w1p = np.mean(w1ps)
-                    plot=True
-                    self.log("min_w1p", np.mean(w1ps), on_step=False, on_epoch=True)
-
-            if np.mean(weighted_w1ps) < self.min_weighted_w1p:
-                    self.min_weighted_w1p = np.mean(weighted_w1ps)
-                    plot=True
-                    self.log("min_weighted_w1p", np.mean(weighted_w1ps), on_step=False, on_epoch=True)
-
-            if plot:
-                self.plot = plotting_point_cloud(step=self.global_step, logger=self.logger)
-                self.plot.plot_calo(self.hists_fake, self.hists_real, weighted=False)
-                self.plot.plot_calo(self.weighted_hists_fake, self.weighted_hists_real, weighted=True)
-                self.plot.plot_response(self.response_fake, self.response_real )
-        except:
-            traceback.print_exc()
-
     def on_test_epoch_start(self, *args, **kwargs):
-        # self.gen_net.eval()
+        self.gen_net.train()
         self.n_kde=self.data_module.n_kde
         self.m_kde=self.data_module.m_kde
     def test_step(self, batch, batch_idx):
@@ -378,10 +303,11 @@ class TF(pl.LightningModule):
                 self._log_dict = {}
                 batch, mask, cond = batch[0], batch[1], batch[2]
                 batch[mask]=0
-                n,_=sample_kde(len(batch)*10,self.n_kde,self.m_kde)
-                mask=create_mask(n).cuda()
-                start=time.time()
-                mask=mask[:len(batch)]
+                cond=cond.reshape(-1,1,1).float()
+                # n,_=sample_kde(len(batch)*10,self.n_kde,self.m_kde)
+                # mask=create_mask(n).cuda()
+                # start=time.time()
+                # mask=mask[:len(batch)]
 
                 self.w1ps = []
                 start=time.time()

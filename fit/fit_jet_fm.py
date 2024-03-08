@@ -142,8 +142,10 @@ class FM(pl.LightningModule):
         with torch.no_grad():
             x0 = torch.randn(batch.shape).to(self.device)
             wrapped_cnf = torch_wrapper(model=self.net, mask=mask, cond=cond)
-            node=NeuralODE(lambda t,x,args: wrapped_cnf(t,x,mask,cond), solver="midpoint", sensitivity="adjoint")
+            node=NeuralODE(lambda t,x,args: wrapped_cnf(t,x,mask,cond), solver="midpoint")
+
             samples = node.trajectory(x0, t_span=torch.linspace(0, t_stop, num_samples).to(self.device),)
+
             return samples[-1,:,:]
 
     def sampleandscale(self,batch,mask=None,cond=None,t_stop=1,num_samples=200,scale=True):
@@ -151,12 +153,30 @@ class FM(pl.LightningModule):
             and reverses the standard scaling that is done in the preprocessing. This allows to calculate the mass
             on the generative sample and to compare to the simulated one, we need to inverse the scaling before calculating the mass
             because calculating the mass is a non linear transformation and does not commute with the mass calculation'''
-        samples=self.sample(batch,mask,cond)
-        samples = self.scaler.inverse_transform(samples)
-        torch.clamp(samples, min=self.scaled_mins, max=self.scaled_maxs, out=samples)
+        print(self.device)
+        fake=self.sample(batch,mask,cond,num_samples=num_samples)
+        if self.hparams.dataset=="jet":
+            std_fake=fake[:,:,:2]
+            pt_fake=fake[:,:,-1:]
+            std_fake= self.scaler.inverse_transform(std_fake)
+            pt_fake= self.pt_scaler.inverse_transform(pt_fake)
+            fake=torch.cat([std_fake,pt_fake],dim=2)
+        else:
+            fake= self.scaler.inverse_transform(fake)
+            fake[:,:,2]=(fake[:,:,2]+torch.randint(0,self.hparams.bins[2],(fake.shape[0],1),device=fake.device).expand(-1,mask.shape[1]))%self.hparams.bins[2]
 
-        samples[mask]=0
-        return samples,None
+        # if self.hparams.dataset=="jet":
+        #     std_fake=samples[:,:,:2]
+        #     pt_fake=samples[:,:,-1:]
+        #     std_fake= self.scaler.inverse_transform(std_fake)
+        #     pt_fake= self.pt_scaler.inverse_transform(pt_fake)
+        #     samples=torch.cat([std_fake,pt_fake],dim=2)
+        # else:
+        #     samples[~mask]= self.scaler.inverse_transform(samples[~mask])
+        # torch.clamp(samples, min=self.scaled_mins, max=self.scaled_maxs, out=samples)
+
+        fake[mask]=0
+        return fake,None
     def on_load_checkpoint(self, checkpoint: dict) -> None:
         state_dict = checkpoint["state_dict"]
         model_state_dict = self.state_dict()
@@ -169,7 +189,6 @@ class FM(pl.LightningModule):
             else:
 
                 is_changed = True
-        print("is changed",is_changed)
         if is_changed:
             checkpoint.pop("optimizer_states", None)
     def configure_optimizers(self):
@@ -219,13 +238,10 @@ class FM(pl.LightningModule):
             if batch[0].shape[1]>0:
                 self._log_dict = {}
                 batch, mask,cond = batch[0], batch[1], batch[2]
-     #
+                batch[mask]=0
                 self.w1ps = []
                 start=time.time()
-                fake = self.sample(batch=batch, mask=mask,cond=cond)
-                fake[~mask]= self.scaler.inverse_transform(fake[~mask])
-                fake[mask]=0
-
+                fake,_ = self.sampleandscale(batch=batch, mask=mask,cond=cond)
                 self.times.append(time.time()-start)
 
                 # self.conds.append(cond.cpu())
@@ -245,8 +261,8 @@ class FM(pl.LightningModule):
                     self.hists_real[-1].fill(mass(batch).cpu().numpy())
                     self.hists_fake[-1].fill(mass(fake[:len(batch)]).cpu().numpy())
                 else:
-                    response_real=(batch[:,:,0].sum(1).reshape(-1)/ (cond[:, :,0] + 10).exp()).cpu().numpy().reshape(-1)
-                    response_fake=(fake[:,:,0].sum(1).reshape(-1)/ (cond[:, :,0] + 10).exp()).cpu().numpy().reshape(-1)
+                    response_real=(batch[:,:,0].sum(1).reshape(-1)/ (cond[:, 0,0] + 10).exp()).cpu().numpy().reshape(-1)
+                    response_fake=(fake[:,:,0].sum(1).reshape(-1)/ (cond[:, 0,0] + 10).exp()).cpu().numpy().reshape(-1)
 
                     for i in range(self.n_dim):
                         self.hists_real[i].fill(batch[~mask.squeeze(-1)][:, i].cpu().long().numpy())
@@ -376,6 +392,11 @@ class FM(pl.LightningModule):
         self.times=[]
         self.n_kde=self.data_module.n_kde
         self.m_kde=self.data_module.m_kde
+        hists=get_hists(self.hparams.bins,self.scaled_mins.reshape(-1)*1.1,self.scaled_maxs.reshape(-1)*1.1,calo=self.hparams.dataset=="calo")
+        self.hists_real,self.hists_fake=hists["hists_real"],hists["hists_fake"]
+        if self.hparams.dataset=="calo":
+            self.weighted_hists_real,self.weighted_hists_fake=hists["weighted_hists_real"],hists["weighted_hists_fake"]
+            self.response_real,self.response_fake=hists["response_real"],hists["response_fake"]
     def test_step(self, batch, batch_idx):
         '''This calculates some important metrics on the hold out set (checking for overtraining)'''
 
@@ -388,22 +409,39 @@ class FM(pl.LightningModule):
 
 
                 batch[mask]=0
+                if self.hparams.dataset=="jet":
+                    n,_=sample_kde(len(batch)*10,self.n_kde,self.m_kde)
+                    mask=create_mask(n,size=self.hparams.n_part).cuda()
 
-                n,_=sample_kde(len(batch)*10,self.n_kde,self.m_kde)
-                mask=create_mask(n,size=self.hparams.n_part).cuda()
-
-                mask=mask[:len(batch)].bool()
-                cond=(~mask).sum(1).float().reshape(-1,1,1)/self.data_module.n_mean
+                    mask=mask[:len(batch)].bool()
+                    cond=(~mask).sum(1).float().reshape(-1,1,1)/self.data_module.n_mean
 
                 self.w1ps = []
                 start=time.time()
-                fake = self.sample(batch=batch, mask=mask,cond=cond,num_samples=200)
-                fake[~mask]= self.scaler.inverse_transform(fake[~mask])
-                fake[mask]=0
+                fake=self.sampleandscale(batch=batch, mask=mask,cond=cond,num_samples=200)[0]
+                # fake = self.sample(batch=batch, mask=mask,cond=cond,num_samples=2)
 
-                self.times.append((time.time()-start)/len(fake))
-                batch=batch.reshape(-1,self.hparams.n_part,self.n_dim)
-                fake=fake.reshape(-1,self.hparams.n_part,self.n_dim)
+                # self.times.append((time.time()-start)/len(fake))
+
+                if self.hparams.dataset=="calo":
+                    # maxs=torch.tensor([6499, self.hparams.bins[1]-1,self.hparams.bins[2]-1,self.hparams.bins[3]-1],device=self.device)
+                    # fake=torch.clamp(fake,torch.zeros_like(fake), maxs)
+                    response_real=(batch[:,:,0].sum(1).reshape(-1)/ (cond[:,0,0] + 10).exp())
+                    response_fake=(fake[:,:,0].sum(1).reshape(-1)/ (cond[:, 0,0] + 10).exp())
+                    response_real=torch.clamp(response_real,0.,1.99).cpu().numpy().reshape(-1)
+                    response_fake=torch.clamp(response_fake,0.,1.99).cpu().numpy().reshape(-1)
+                    for i in range(self.n_dim):
+                        self.hists_real[i].fill(batch[~mask.squeeze(-1)][:, i].cpu().long().numpy())
+                        self.hists_fake[i].fill(fake[~mask.squeeze(-1)][:, i].cpu().long().numpy())
+                        if i>=1:
+                            self.weighted_hists_real[i-1].fill(batch[~mask.squeeze(-1)][:, i].cpu().long().numpy(),weight=batch[~mask.squeeze(-1)][:, 0].cpu().numpy())
+                            self.weighted_hists_fake[i-1].fill(fake[~mask.squeeze(-1)][:, i].cpu().long().numpy(),weight=fake[~mask.squeeze(-1)][:, 0].cpu().numpy())
+                    self.response_real.fill(response_real)
+                    self.response_fake.fill(response_fake)
+
+
+                batch=batch.reshape(-1,batch.shape[1],batch.shape[2])
+                fake=fake.reshape(-1,batch.shape[1],batch.shape[2])
                 self.batch.append(batch.cpu())
                 self.fake.append(fake.cpu())
                 self.masks.append(mask.cpu())

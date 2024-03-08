@@ -103,7 +103,7 @@ class PNF(pl.LightningModule):
             because calculating the mass is a non linear transformation and does not commute with the mass calculation'''
         fake=None
         k=0
-        while k<5:
+        while k<5 and fake is None:
 
             try:
                 if self.hparams.context_features>=1:
@@ -113,18 +113,25 @@ class PNF(pl.LightningModule):
                     fake=self.flow.sample(len(batch)*self.n_part)
             except:
                 k+=1
+                traceback.print_exc()
                 print("sampling failed",k)
 
-        if k+1>5:
-                traceback.print_exc()
-                raise
+            if k+1>5:
+                    traceback.print_exc()
+                    raise
 
         #This make sure that everything is on the right device
         #Not here that this sample is conditioned on the mass of the current batch allowing the MSE
         #to be calculated later on
         m_f=None
         if scale:
-            fake=self.scaler.inverse_transform(fake.reshape(-1,self.n_part,self.n_dim))
+
+            fake=fake.reshape(-1,self.hparams.n_part,self.hparams.n_dim)
+            std_fake=fake[:,:,:2]
+            pt_fake=fake[:,:,-1:]
+            std_fake= self.scaler.inverse_transform(std_fake)
+            pt_fake= self.pt_scaler.inverse_transform(pt_fake)
+            fake=torch.cat([std_fake,pt_fake],dim=2)
             fake[mask]=0
 
 
@@ -218,8 +225,14 @@ class PNF(pl.LightningModule):
                 self._log_dict = {}
 
                 batch, mask, cond = batch[0], batch[1], batch[2]
+                scaled_batch=batch.clone()
 
-                scaled_batch=self.scaler.transform(batch)
+                std_batch=scaled_batch[:,:,:2]
+                pt_batch=scaled_batch[:,:,-1:]
+                std_batch[~mask]= self.scaler.transform(std_batch[~mask])
+                pt_batch[~mask]= self.pt_scaler.transform(pt_batch[~mask])
+                scaled_batch=torch.cat([std_batch,pt_batch],dim=2)
+
                 scaled_batch[mask]=torch.randn_like(scaled_batch[mask])*1e-4
                 if self.hparams.context_features>=1:
                     cond=self.shape(scaled_batch.reshape(-1,self.hparams.n_part,self.hparams.n_dim)).repeat_interleave(self.hparams.n_part,dim=0)
@@ -308,7 +321,13 @@ class PNF(pl.LightningModule):
                 self._log_dict = {}
                 batch, mask, cond = batch[0], batch[1], batch[2]
 
-                scaled_batch=self.scaler.transform(batch)
+                scaled_batch=batch.clone()
+
+                std_batch=scaled_batch[:,:,:2]
+                pt_batch=scaled_batch[:,:,-1:]
+                std_batch[~mask]= self.scaler.transform(std_batch[~mask])
+                pt_batch[~mask]= self.pt_scaler.transform(pt_batch[~mask])
+                scaled_batch=torch.cat([std_batch,pt_batch],dim=2)
                 scaled_batch[mask]=torch.randn_like(scaled_batch[mask])*1e-4
                 batch[mask]=0
                 if self.hparams.context_features>=1:

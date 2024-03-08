@@ -7,7 +7,7 @@ bins:
   - 100
   - 100
   - 100
-ckpt: ""
+ckpt: "ckpts/t_cnf.ckpt"
 cond_dim: 1
 context_features: 1
 coupling_hidden: 128
@@ -24,7 +24,7 @@ hidden_features: 156
 hidden_gen: 128
 l_dim: 16
 l_dim_gen: 16
-lambda_m: 0.1
+lambda_m: 1
 lr: 0.0002
 mass_loss: true
 max: false
