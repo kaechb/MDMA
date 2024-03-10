@@ -193,6 +193,7 @@ class PointCloudDataloader(pl.LightningDataModule):
         self.E=self.data["Egen"]
         self.data=self.data["E_z_alpha_r"]
         self.val_data=torch.load(f"/beegfs/desy/user/kaechben/calochallenge/pc_test_{self.dataset}.pt")
+
         self.test_E=self.val_data["Egen"]
         self.test_data=self.val_data["E_z_alpha_r"]
         self.val_E=self.val_data["Egen"][:self.batch_size*100]
@@ -212,9 +213,10 @@ class PointCloudDataloader(pl.LightningDataModule):
         self.maxs=torch.ones(4).unsqueeze(0)
         n=[]
         # for d in self.data:
-        #     self.mins=torch.cat((self.mins,d.reshape(-1,4).min(0,keepdim=True)[0])).min(0,keepdim=True)[0]
-        #     self.maxs=torch.cat((self.maxs,d.reshape(-1,4).max(0,keepdim=True)[0])).max(0,keepdim=True)[0]
-        #     n.append(len(d))
+        #     if len(d)>0:
+        #         self.mins=torch.cat((self.mins,d.reshape(-1,4).min(0,keepdim=True)[0])).min(0,keepdim=True)[0]
+        #         self.maxs=torch.cat((self.maxs,d.reshape(-1,4).max(0,keepdim=True)[0])).max(0,keepdim=True)[0]
+        #         n.append(len(d))
         # self.avg_n=float(sum(n)/len(n))
         if self.max:
             self.train_iterator = BucketBatchSamplerMax(
@@ -227,14 +229,14 @@ class PointCloudDataloader(pl.LightningDataModule):
             self.val_iterator = BucketBatchSamplerMax(
                                 self.val_data,
                                 batch_size = self.batch_size,
-                                max_tokens_per_batch=80000,
+                                max_tokens_per_batch=50000000,
                                 drop_last=False,
                                 shuffle=False
                                 )
             self.test_iterator = BucketBatchSamplerMax(
                                 self.test_data,
                                 batch_size = self.batch_size,
-                                max_tokens_per_batch=500000,
+                                max_tokens_per_batch=5_000_000,
                                 drop_last=False,
                                 shuffle=False
                                 )

@@ -203,18 +203,10 @@ class MultiClassifier(pl.LightningModule):
             plt.savefig("plots/jetnet30/predicted_all.png")
 
 files=os.listdir(datadir)
-names=[x.replace(".pt","").replace("t_","") for x in os.listdir(datadir)]
-try:
-    names.remove("tf_slow_ema")
-    files.remove("t_tf_slow_ema.pt")
 
-
-except:
-    pass
-assert len(files)==len(names)
-names=["ipf","apf","pf","nf","cnf","ccnf","tnf","tf_slow"]
+names=["ipf","apf","pf","nf","cnf","ccnf","tnf","tf"]
 files=["t_"+x+".pt" for x in names]
-replace_dict={"tf_slow":"TGAN","ccnf":"NF(cc)","cnf":"NF(c)","ipf":"IPF","nf":"NF","apf":"APF","pf":"PF","tnf":"TNF","tNF":"TNF"}
+replace_dict={"tf":"TGAN","ccnf":"NF(cc)","cnf":"NF(c)","ipf":"IPF","nf":"NF","apf":"APF","pf":"PF","tnf":"TNF","tNF":"TNF"}
 names=[replace_dict[name] for name in names]
 
 # Define the model

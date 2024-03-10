@@ -107,7 +107,7 @@ class TF(pl.LightningModule):
             std_fake= self.scaler.inverse_transform(std_fake)
             pt_fake= self.pt_scaler.inverse_transform(pt_fake)
             fake=torch.cat([std_fake,pt_fake],dim=2)
-            return fake,None
+            return fake
         else:
             return fake
 
@@ -223,18 +223,15 @@ class TF(pl.LightningModule):
 
             if batch[0].shape[1]>0:
                 self._log_dict = {}
-                batch, mask, cond = batch[0], batch[1], batch[2]
-
-                cond=cond.reshape(-1,1,1).float()
+                batch, mask = batch[0], batch[1]
                 self.w1ps = []
                 start=time.time()
-                fake,_ = self.sampleandscale(batch=batch, mask=mask, cond=cond, scale=True)
+                fake = self.sampleandscale(batch=batch, mask=mask, cond=None, scale=True)
                 self.times.append(start-time.time())
                 assert (fake==fake).all()
                 self.batch.append(batch.cpu())
                 self.fake.append(fake.cpu())
                 self.masks.append(mask.cpu())
-                self.conds.append(cond.cpu())
                 if self.name=="jet":
                     for i in range(3):
                         self.hists_real[i].fill(batch[~mask][:, i].cpu().numpy())
@@ -290,7 +287,7 @@ class TF(pl.LightningModule):
 
 
     def on_test_epoch_start(self, *args, **kwargs):
-        self.gen_net.train()
+        self.gen_net.eval()
         self.n_kde=self.data_module.n_kde
         self.m_kde=self.data_module.m_kde
     def test_step(self, batch, batch_idx):
@@ -301,23 +298,21 @@ class TF(pl.LightningModule):
             if batch[0].shape[1]>0:
 
                 self._log_dict = {}
-                batch, mask, cond = batch[0], batch[1], batch[2]
+                batch, mask = batch[0], batch[1]
                 batch[mask]=0
-                cond=cond.reshape(-1,1,1).float()
-                # n,_=sample_kde(len(batch)*10,self.n_kde,self.m_kde)
-                # mask=create_mask(n).cuda()
-                # start=time.time()
-                # mask=mask[:len(batch)]
+
+                n,_=sample_kde(len(batch)*10,self.n_kde,self.m_kde)
+                mask=create_mask(n).cuda()
+                start=time.time()
+                mask=mask[:len(batch)]
 
                 self.w1ps = []
                 start=time.time()
-                fake,mf = self.sampleandscale(batch=batch.cuda(), mask=mask.cuda(), cond=cond.cuda(), scale=True)
-                fake[mask]=0
+                fake = self.sampleandscale(batch=batch.cuda(), mask=mask.cuda(), cond=None, scale=True)
+
                 self.times.append(time.time()-start)
-                # batch=batch.reshape(-1,self.hparams.n_part,self.n_dim)
-                # fake=fake.reshape(-1,self.hparams.n_part,self.n_dim)
                 self.batch.append(batch.cpu())
                 self.fake.append(fake.cpu())
                 self.masks.append(mask.cpu())
-                self.conds.append(cond.cpu())
+
 

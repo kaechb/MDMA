@@ -108,21 +108,25 @@ class MDMA(pl.LightningModule):
             z = torch.normal(torch.zeros(mask.shape[0], mask.shape[1], self.n_dim, device=mask.device), torch.ones(mask.shape[0], mask.shape[1], self.n_dim, device=mask.device))
             z[mask] = 0  # Since mean field is initialized by sum, we need to set the masked values to zero
         fake = self.gen_net(z, mask=mask.clone(), cond=cond.clone(), weight=False)
-        fake[:,:,2] = self.relu(fake[:, :, 2] - self.mins.reshape(-1)[2]) + self.mins.reshape(-1)[2]
-        fake[:,:,2] = -self.relu(self.maxs.reshape(-1)[2] - fake[:, :, 2]) + self.maxs.reshape(-1)[2]
+        # fake[:,:,2] = self.relu(fake[:, :, 2] - self.mins.reshape(-1)[2]) + self.mins.reshape(-1)[2]
+        # fake[:,:,2] = -self.relu(self.maxs.reshape(-1)[2] - fake[:, :, 2]) + self.maxs.reshape(-1)[2]
         fake[mask] = 0  # set the masked values to zero
         if scale:
             if self.hparams.dataset=="jet":
-                std_fake=fake[:,:,:2]
-                pt_fake=fake[:,:,-1:]
-                std_fake= self.scaler.inverse_transform(std_fake)
-                pt_fake= self.pt_scaler.inverse_transform(pt_fake)
-                fake=torch.cat([std_fake,pt_fake],dim=2)
+
+                if self.hparams.boxcox:
+                    std_fake=fake[:,:,:2]
+                    pt_fake=fake[:,:,-1:]
+                    std_fake= self.scaler.inverse_transform(std_fake)
+                    pt_fake= self.pt_scaler.inverse_transform(pt_fake)
+                    fake=torch.cat([std_fake,pt_fake],dim=2)
+                else:
+                    fake = self.scaler.inverse_transform(fake)
             else:
                 fake = self.scaler.inverse_transform(fake)
             if self.hparams.dataset=="calo":
                 fake[...,1:]=fake[...,1:].floor()
-                fake[:,:,2]=(fake[:,:,2]+torch.randint(0,self.num_alpha,(fake.shape[0],1),device=fake.device).expand(-1,mask.shape[1]))%self.hparams.bins[2]
+                fake[:,:,2]=(fake[:,:,2]+torch.randint(0,self.hparams.bins[2], size=(fake.shape[0],1),device=fake.device).expand(-1,mask.shape[1]))%self.hparams.bins[2]
             fake[mask] = 0  # set the masked values to zero
             return fake,None
         else:
@@ -427,6 +431,7 @@ class MDMA(pl.LightningModule):
                 if self.hparams.dataset=="calo":
                     maxs=torch.tensor([6499, self.hparams.bins[1]-1,self.hparams.bins[2]-1,self.hparams.bins[3]-1],device=self.device)
                     fake=torch.clamp(fake,torch.zeros_like(fake), maxs)
+                    # batch=torch.clamp(batch,torch.zeros_like(batch), maxs)
                     response_real=(batch[:,:,0].sum(1).reshape(-1)/ (cond[:, 0,0] + 10).exp())
                     response_fake=(fake[:,:,0].sum(1).reshape(-1)/ (cond[:, 0,0] + 10).exp())
                     response_real=torch.clamp(response_real,0,1.99).cpu().numpy().reshape(-1)

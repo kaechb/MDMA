@@ -1,5 +1,6 @@
 import torch
 import os
+import sys
 
 # Get the current path of the notebook
 notebook_path = os.getcwd()
@@ -13,14 +14,14 @@ sys.path.insert(0, notebook_path)
 from fit.fit_jet_fm import FM
 import pytorch_lightning as pl
 import torch
-from utils.dataloader_jetnet import PointCloudDataloader
+
+
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib.patches as mpatches
 from utils.helpers import get_hists, mass
-from utils.dataloader_jetnet import PointCloudDataloader
 import matplotlib as mpl
 import matplotlib.gridspec as gridspec
 from matplotlib.ticker import MaxNLocator, FuncFormatter
@@ -70,6 +71,14 @@ def sample_kde(n,n_kde,m_kde=False):
 
 
 
+
+def one_digit_formatter(x, pos):
+    return f'{x:.1e}'
+
+
+
+FONTSIZE=20
+
 def calculate_data_bounds(dataloader, n_dim):
     """
     Calculates the minimum and maximum values across the dimensions from the dataloader.
@@ -89,15 +98,6 @@ def calculate_data_bounds(dataloader, n_dim):
         n_counts.append((~data[1]).sum(1))
 
     return mins, maxs, n_counts
-
-
-def one_digit_formatter(x, pos):
-    return f'{x:.1e}'
-
-from utils.dataloader_jetnet import PointCloudDataloader
-
-FONTSIZE=20
-
 def make_plots(model_name,data_module, disco=False):
     import os
 
@@ -113,25 +113,36 @@ def make_plots(model_name,data_module, disco=False):
         print(config)
         config["ckpt"]=None
         config["sampler"]=False
+        config["boxcox"]=boxcox
+        print("boxcox",boxcox)
         # Choose the model class based on the model name
 
         if model_name.find("fm")==-1:
                 from fit.fit import MDMA
-                model=MDMA.load_from_checkpoint(ckpt,strict=False)
+                model=MDMA.load_from_checkpoint(ckpt,strict=False,boxcox=boxcox)
                 config["model"]="MDMA"
 
                 model.gen_net.avg_n = data_module.avg_n
-                model.mins=data_module.std_mins
-                model.maxs=data_module.std_maxs
+                model.mins=data_module.std_mins.to("cuda")
+                model.maxs=data_module.std_maxs.to("cuda")
         else:
-            model=FM.load_from_checkpoint(ckpt,)
+            model=FM.load_from_checkpoint(ckpt,boxcox=boxcox)
+            model.mins=data_module.std_mins.to("cuda")
+            model.maxs=data_module.std_maxs.to("cuda")
         model.w1m_best = 0.01
-
         # Initialize data module and set up model
-        model.scaler = data_module.scaler[0].to("cuda")
-        model.pt_scaler=data_module.scaler[1]
+        if boxcox:
+            model.scaler = data_module.scaler[0].to("cuda")
+            model.pt_scaler=data_module.scaler[1]
+        else:
+            model.scaler=data_module.scaler.to("cuda")
         model.scaled_mins = torch.tensor(data_module.mins).cuda()[:3]
         model.scaled_maxs = torch.tensor(data_module.maxs).cuda()[:3]
+        model.min_pt = data_module.min_pt
+        model.max_pt = data_module.max_pt
+        mins, maxs, n_counts = calculate_data_bounds(data_module.train_dataloader(), config["n_dim"])
+        model.maxs = maxs.cuda().reshape(-1)
+        model.mins = mins.cuda().reshape(-1)
         model.batch=[]
         model.n_dim=3
         model.masks=[]
@@ -165,7 +176,7 @@ def make_plots(model_name,data_module, disco=False):
         with open("/beegfs/desy/user/kaechben/thesis/eval_jetnet150/{}_jets.npy".format(model_name), "wb") as f:
             np.save(f,fake.cpu().numpy())
         total=(time.time()-start)/500000.
-        if model_name== "mdma_jet":
+        if model_name.find("mdma_jet")!=-1:
             params=sum(p.numel() for p in model.gen_net.parameters() if p.requires_grad)
         else:
             params=sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -190,9 +201,9 @@ def make_plots(model_name,data_module, disco=False):
 
     return model,total,params
 
-def calc_metrics(true,train,time_dict,param_dict):
+def calc_metrics(true,train,time_dict,param_dict,models):
 
-    for i,model_name in enumerate(["mdma_jet","jetnet150_fm","EPiC-FM","EPiC-GAN","IN",]):#mdma_jet
+    for i,model_name in enumerate(models):#mdma_jet
         if model_name=="IN":
             fake=train
         else:
@@ -200,6 +211,7 @@ def calc_metrics(true,train,time_dict,param_dict):
         if model_name.find("EPiC-GAN")>-1:
             fake=fake[:,:,[1,2,0]]
         assert len(fake)==len(true)
+        # model_name=model_name.replace("_std","")
         m_f, m_t = mass(fake), mass(true)
         # Apply clamping based on quantiles
         mins = torch.quantile(true.reshape(-1, 3), 0.0, dim=0)
@@ -237,7 +249,6 @@ def calc_metrics(true,train,time_dict,param_dict):
         plotter.plot_ratio(hists["hists_real"], hists["hists_fake"], weighted=False, leg=2, model_name=model_name,n_part=150,log=True)
         df=pd.DataFrame(metrics)
         print(metrics)
-        print(df)
         if i==0:
             results=df
         else:
@@ -317,8 +328,8 @@ def print_table(results):
     df["kpd_std"]=df["kpd"].apply(lambda x:x[1]).apply(np.mean)
     df["kpd"]=df["kpd"].apply(lambda x:x[0]).apply(np.mean)
 
-    replace_dict={"mdma_jet":"MDMA-GAN","mdma_jet":"MDMA-GAN","jetnet150_fm":"MDMA-Flow","IN":"IN","EPiC-GAN":"EPiC-GAN","EPiC-FM":"EPiC-FM"}
-    df.loc[:,"model"]=df["model"].apply(lambda x:replace_dict[x])
+    replace_dict={"mdma_jet":"MDMA-GAN","mdma_jet":"MDMA-GAN","mdma_fm_jet":"MDMA-Flow","IN":"IN","EPiC-GAN":"EPiC-GAN","EPiC-FM":"EPiC-FM"}
+    df.loc[:,"model"]=df["model"].apply(lambda x:replace_dict[x.replace("_std","")])
     df=df.set_index("model",drop=True)
     df.loc[:,"w1m"]*=1000
     df.loc[:,"w1p"]*=1000
@@ -344,7 +355,7 @@ def print_table(results):
     order=["MDMA-GAN","MDMA-Flow","EPiC-GAN","EPiC-FM","IN"]
     print(df)
     df=df.loc[order,:]
-    print(df)
+
     # def count_parameters(model): return sum(p.numel() for p in model.parameters() if p.requires_grad)
     # print (count_parameters(model.gen_net))
     # df=df.set_index("model",drop=True)
@@ -366,21 +377,33 @@ def print_table(results):
         tex+="\n"
     print(tex)
 import json
+models=["mdma_jet","mdma_fm_jet","EPiC-FM","IN","EPiC-GAN"]#,"mdma_fm_jet","EPiC-FM","IN","EPiC-GAN"
+boxcox=True
+for i in models:
+
+    if i.find("_std")>-1:
+        boxcox=False
+        break
+print("boxcox:",boxcox)
+if boxcox:
+    from utils.dataloader_jetnet import PointCloudDataloader
+else:
+    from utils.dataloader_jetnet_std import PointCloudDataloader
 data_module = PointCloudDataloader(batch_size=5000,n_part=150,n_dim=3,sampler=False,parton="t")
 data_module.setup("fit")
 torch.set_float32_matmul_precision("medium")
-
+time_dict={}
+param_dict={}
 true=data_module.real_test[...,:-1]
 train=torch.from_numpy(data_module.train[...,:-1])[:50000]
 with open('params.json', 'r') as json_file:
     param_dict = json.load(json_file)
 with open('times.json', 'r') as json_file:
     time_dict = json.load(json_file)
-if False:
-    time_dict={}
-    param_dict={}
+if True:
 
-    for i,model_name in enumerate(["mdma_jet","EPiC-FM","jetnet150_fm","IN","EPiC-GAN",]):#
+
+    for i,model_name in enumerate(models):#
         model,total,params=make_plots(model_name,data_module=data_module)
         time_dict[model_name]=total
         param_dict[model_name]=params
@@ -390,7 +413,7 @@ if False:
         json.dump(time_dict, json_file)
 
 
-results=calc_metrics(true,train,time_dict,param_dict)
+results=calc_metrics(true,train,time_dict,param_dict,models)
 
 results.to_csv("results150.csv")
 results=pd.read_csv("results150.csv")

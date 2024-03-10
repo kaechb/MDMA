@@ -7,6 +7,7 @@ bins:
   - 100
   - 100
   - 100
+boxcox: true
 ckpt: "ckpts/t_cnf.ckpt"
 cond_dim: 1
 context_features: 1

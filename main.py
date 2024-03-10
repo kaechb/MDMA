@@ -109,10 +109,15 @@ def setup_model(config, data_module=None, model=False):
         model=setup_scaler_calo(config, data_module,model)
         model.E_loss_mean = None
     else:
+
         model.bins = [100, 100, 100]
         model.n_dim = 3
-        model.scaler = data_module.scaler[0]
-        model.pt_scaler= data_module.scaler[1]
+        if config["boxcox"]:
+
+            model.scaler = data_module.scaler[0]
+            model.pt_scaler= data_module.scaler[1]
+        else:
+            model.scaler=data_module.scaler
         model.w1m_best = 0.01
 
     if config["dataset"] == "jet":
@@ -145,7 +150,7 @@ def train(config, logger, data_module, ckpt=False):
 
             elif (config["dataset"] == "calo" and "middle" in config.keys() and config["middle"] == False):
                 model = MDMA.load_from_checkpoint(
-                    ckpt,strict=True, bins=config["bins"],lr=config["lr"],max=config["max"]
+                    ckpt,strict=True, bins=config["bins"],lr=config["lr"],max=config["max"],middle=config["middle"]
                 )
                 model=setup_scaler_calo(config, data_module,model)
 
@@ -154,7 +159,7 @@ def train(config, logger, data_module, ckpt=False):
             if config["dataset"] == "jet" and config["n_part"] == 150:
                 model = FM.load_from_checkpoint(ckpt, **config)
             else:
-                model = FM.load_from_checkpoint(ckpt, bins=config["bins"],lr=config["lr"],exact=config["exact"])
+                model = FM.load_from_checkpoint(ckpt, bins=config["bins"],lr=config["lr"],exact=config["exact"],middle=config["middle"],max=config["max"])
         elif config["model"] == "NF":
             model = NF.load_from_checkpoint(ckpt, lambda_m=config["lambda_m"],mass_loss=config["mass_loss"],)
         elif config["model"] == "PNF":

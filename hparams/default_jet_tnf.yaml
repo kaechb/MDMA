@@ -6,6 +6,7 @@ bins:
   - 100
   - 100
   - 100
+boxcox: true
 ckpt: ''
 ckpt_flow: ./ckpts/t_nf.ckpt
 cond_dim: 0

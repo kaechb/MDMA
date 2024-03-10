@@ -8,6 +8,7 @@ bins:
   - 100
   - 100
   - 100
+boxcox: false
 ckpt: ''
 cloudnorm: false
 cloudnormgen: false

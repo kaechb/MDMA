@@ -156,24 +156,20 @@ class FM(pl.LightningModule):
         print(self.device)
         fake=self.sample(batch,mask,cond,num_samples=num_samples)
         if self.hparams.dataset=="jet":
-            std_fake=fake[:,:,:2]
-            pt_fake=fake[:,:,-1:]
-            std_fake= self.scaler.inverse_transform(std_fake)
-            pt_fake= self.pt_scaler.inverse_transform(pt_fake)
-            fake=torch.cat([std_fake,pt_fake],dim=2)
+            if self.hparams.boxcox:
+                std_fake=fake[:,:,:2]
+                pt_fake=fake[:,:,-1:]
+                std_fake= self.scaler.inverse_transform(std_fake)
+                pt_fake= self.pt_scaler.inverse_transform(pt_fake)
+                fake=torch.cat([std_fake,pt_fake],dim=2)
+            else:
+                fake= self.scaler.inverse_transform(fake)
+
         else:
             fake= self.scaler.inverse_transform(fake)
-            fake[:,:,2]=(fake[:,:,2]+torch.randint(0,self.hparams.bins[2],(fake.shape[0],1),device=fake.device).expand(-1,mask.shape[1]))%self.hparams.bins[2]
+            fake[:,:,2]=(fake[:,:,2]+torch.randint(0,self.hparams.bins[2], size=(fake.shape[0],1),device=fake.device).expand(-1,mask.shape[1]))%self.hparams.bins[2]
 
-        # if self.hparams.dataset=="jet":
-        #     std_fake=samples[:,:,:2]
-        #     pt_fake=samples[:,:,-1:]
-        #     std_fake= self.scaler.inverse_transform(std_fake)
-        #     pt_fake= self.pt_scaler.inverse_transform(pt_fake)
-        #     samples=torch.cat([std_fake,pt_fake],dim=2)
-        # else:
-        #     samples[~mask]= self.scaler.inverse_transform(samples[~mask])
-        # torch.clamp(samples, min=self.scaled_mins, max=self.scaled_maxs, out=samples)
+
 
         fake[mask]=0
         return fake,None
@@ -424,8 +420,8 @@ class FM(pl.LightningModule):
                 # self.times.append((time.time()-start)/len(fake))
 
                 if self.hparams.dataset=="calo":
-                    # maxs=torch.tensor([6499, self.hparams.bins[1]-1,self.hparams.bins[2]-1,self.hparams.bins[3]-1],device=self.device)
-                    # fake=torch.clamp(fake,torch.zeros_like(fake), maxs)
+                    maxs=torch.tensor([6499, self.hparams.bins[1]-1,self.hparams.bins[2]-1,self.hparams.bins[3]-1],device=self.device)
+                    fake=torch.clamp(fake,torch.zeros_like(fake), maxs)
                     response_real=(batch[:,:,0].sum(1).reshape(-1)/ (cond[:,0,0] + 10).exp())
                     response_fake=(fake[:,:,0].sum(1).reshape(-1)/ (cond[:, 0,0] + 10).exp())
                     response_real=torch.clamp(response_real,0.,1.99).cpu().numpy().reshape(-1)

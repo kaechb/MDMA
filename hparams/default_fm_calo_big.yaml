@@ -18,7 +18,7 @@ dataset: calo
 decay: 0.999
 dropout: 0
 E_loss: false
-ema: true
+ema: false
 ema_start: 50000
 frequencies: 8
 exact: true

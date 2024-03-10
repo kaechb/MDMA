@@ -132,7 +132,7 @@ class plotting_thesis():
         if leg >= 0:
             ax.legend(loc="best", fontsize=self.FONTSIZE)
             handles, labels = ax.get_legend_handles_labels()
-            handles[1] = mpatches.Patch(color=sns.color_palette()[1], label="The red data")
+            handles[0] = mpatches.Patch(color=sns.color_palette()[0], label="The red data")
             ax.legend(handles, labels)
 
     def plot_ratio_calo(self, h_real, h_fake, weighted=False, leg=-1, model_name="",):
@@ -209,9 +209,8 @@ class plotting_thesis():
 
 
         plt.tight_layout()
-        big="_big" if self.big else ""
         weighted="_weighted" if weighted else ""
-        plt.savefig(f"plots/calo/{model_name}{big}{weighted}.pdf", format="pdf")
+        plt.savefig(f"plots/calo/{model_name}{weighted}.pdf", format="pdf")
         plt.show()
         plt.close()
 
@@ -366,14 +365,14 @@ class plotting_thesis():
             fig, axes = plt.subplots(1, 3, figsize=self.fig_size3)
             # fig.suptitle("Correlations between Particles for {} Data".format(name), fontsize=28, fontweight="bold")
             sns.heatmap(correlations[0], ax=axes[0], cmap='coolwarm', cbar=False,vmin=lims[0][0],vmax=lims[0][1])
-            axes[0].set_title(r'$\eta^{rel}$',fontsize=self.FONTSIZE+5)
+            axes[0].set_title(r'$\eta^{\text{rel}}$',fontsize=self.FONTSIZE+10, pad=10)
 
             sns.heatmap(correlations[1], ax=axes[1], cmap='coolwarm', cbar=False,vmin=lims[1][0],vmax=lims[1][1])
-            axes[1].set_title(r'$\phi^{rel}$',fontsize=self.FONTSIZE+5)
+            axes[1].set_title(r'$\phi^{\text{rel}}$',fontsize=self.FONTSIZE+10, pad=10)
 
             cax3=sns.heatmap(correlations[2], ax=axes[2], cmap='coolwarm',cbar=False,vmin=lims[2][0],vmax=lims[2][1]
                              )
-            axes[2].set_title(r'$p_T^{rel}$',fontsize=self.FONTSIZE+5)
+            axes[2].set_title(r'$p_T^{\text{rel}}$',fontsize=self.FONTSIZE+10, pad=10)
             for ax in axes:
                 ax.set_xticks([])
                 ax.set_yticks([])

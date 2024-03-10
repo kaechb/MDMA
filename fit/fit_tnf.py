@@ -35,9 +35,7 @@ class TNF(pl.LightningModule):
         """This initializes the model and its hyperparameters, also some loss functions are defined here"""
         super().__init__()
         self.save_hyperparameters()
-
         self.automatic_optimization = False
-
         self.gen_net = TGen(**hparams)
         self.dis_net = TDisc(**hparams)
         if hparams["ckpt_flow"].find("jetnet30")>-1:
@@ -54,7 +52,6 @@ class TNF(pl.LightningModule):
         self.relu = torch.nn.ReLU()
         self.mse = nn.MSELoss()
         self.step = 0
-
         self.name = self.hparams.dataset
         self._log_dict = {}
         self.times = []
@@ -124,10 +121,8 @@ class TNF(pl.LightningModule):
             std_fake= self.scaler.inverse_transform(std_fake)
             pt_fake= self.pt_scaler.inverse_transform(pt_fake)
             fake=torch.cat([std_fake,pt_fake],dim=2)
-            # fake_scaled[fake_scaled[:,:,2]<1e-4,:]=0
-
-            # fake[mask] = 0  # set the masked values
-            return fake, None
+            fake[mask]=0
+            return fake
         else:
             return fake
 
@@ -272,7 +267,7 @@ class TNF(pl.LightningModule):
                 cond = cond.reshape(-1, 1, 1).float()
                 self.w1ps = []
                 start = time.time()
-                fake, _ = self.sampleandscale(batch=batch, mask=mask, scale=True)
+                fake = self.sampleandscale(batch=batch, mask=mask, scale=True)
                 self.times.append(time.time() - start)
                 assert (fake == fake).all()
                 self.batch.append(batch.cpu())
@@ -298,6 +293,8 @@ class TNF(pl.LightningModule):
             self.jetnet_evaluation()
 
     def jetnet_evaluation(self):
+        """calculates metrics and logs them"""
+
         from jetnet.evaluation import fpd, get_fpd_kpd_jet_features, kpd, w1m
 
         # Concatenate along the first dimension
@@ -336,9 +333,7 @@ class TNF(pl.LightningModule):
             if not hasattr(self, "true_fpd"):
                 self.true_fpd = get_fpd_kpd_jet_features(real, efp_jobs=1)
             self.min_fpd = 0.01
-        """calculates some metrics and logs them"""
         # calculate w1m 10 times to stabilize for ckpting
-
         fpd_log = 10
         self.log("w1m", w1m_, on_step=False, prog_bar=False, logger=True, on_epoch=True)
         if w1m_ < self.w1m_best * 1.2:  #
@@ -346,16 +341,10 @@ class TNF(pl.LightningModule):
             fpd_ = fpd(self.true_fpd, fake_fpd, max_samples=len(real))
             fpd_log = fpd_[0]
             self.log("actual_fpd", fpd_[0], on_step=False, prog_bar=False, logger=True)
-        if (
-           True
-        ):  # only log images if w1m is better than before because it takes a lot of time
-
-
+        if w1m_<self.w1m_best:  # only log images if w1m is better than before because it takes a lot of time
             self.plot = plotting_point_cloud(step=self.global_step, logger=self.logger)
             try:
                 self.plot.plot_jet(self.hists_real, self.hists_fake)
-                # self.plot.plot_scores(torch.cat(self.scores_real).numpy().reshape(-1), torch.cat(self.scores_fake.reshape(-1)).numpy(), False, self.global_step)
-
             except Exception as e:
 
                 plt.close()
@@ -368,18 +357,18 @@ class TNF(pl.LightningModule):
         self.log("fpd", fpd_log, on_step=False, prog_bar=False, logger=True)
     def on_test_epoch_start(self, *args, **kwargs):
         self.gen_net.train()
-        self.flow.train()
         self.n_kde=self.data_module.n_kde
         self.m_kde=self.data_module.m_kde
     def test_step(self, batch, batch_idx):
-        '''This calculates some important metrics on the hold out set (checking for overtraining)'''
+        '''This calculates some important metrics on the hold out set (checking for overtraining)
+            Also this is used for the evaluation results in the thesis '''
 
         with torch.no_grad():
 
             if batch[0].shape[1]>0:
 
                 self._log_dict = {}
-                batch, mask, cond = batch[0], batch[1], batch[2]
+                batch, mask = batch[0], batch[1]
 
 
                 batch[mask]=0
@@ -388,16 +377,15 @@ class TNF(pl.LightningModule):
                 mask=create_mask(n).cuda()
                 start=time.time()
                 mask=mask[:len(batch)]
-                #self.log("test_logprob",logprob, logger=True)
 
                 self.w1ps = []
                 start=time.time()
-                fake,mf = self.sampleandscale(batch=batch, mask=mask, cond=cond, scale=True)
+                fake = self.sampleandscale(batch=batch, mask=mask, cond=None, scale=True)
                 self.times.append(time.time()-start)
                 batch=batch.reshape(-1,self.hparams.n_part,self.n_dim)
                 fake=fake.reshape(-1,self.hparams.n_part,self.n_dim)
                 self.batch.append(batch.cpu())
                 self.fake.append(fake.cpu())
                 self.masks.append(mask.cpu())
-                self.conds.append(cond.cpu())
+                self.conds.append(n.cpu())
 
