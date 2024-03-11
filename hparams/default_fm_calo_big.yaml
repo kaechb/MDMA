@@ -21,7 +21,7 @@ E_loss: false
 ema: false
 ema_start: 50000
 frequencies: 8
-exact: true
+exact: false
 glu: true
 heads: 8
 hidden_dim: 1024

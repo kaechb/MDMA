@@ -172,7 +172,7 @@ class PointCloudDataloader(pl.LightningDataModule):
     one thing to note is the custom standard scaler that works on tensors
    """
 
-    def __init__(self,name,batch_size,max=False,scaler_path=False,middle=True,**kwargs):
+    def __init__(self,name,batch_size,max=False,scaler_path="./",middle=True,**kwargs):
         self.name=name
         self.batch_size=batch_size
         self.max=max
@@ -206,7 +206,7 @@ class PointCloudDataloader(pl.LightningDataModule):
                         ],
                         featurenames=["E", "z", "alpha", "r"],
                         name=self.dataset,
-                        data_dir="./",
+                        data_dir=self.scaler_path,
                         overwrite=False)
         del self.scaler.transfs[1].steps[0]
         self.mins=torch.ones(4).unsqueeze(0)
@@ -223,13 +223,13 @@ class PointCloudDataloader(pl.LightningDataModule):
                                 self.data,
                                 batch_size = self.batch_size,
                                 drop_last=True,
-                                max_tokens_per_batch=80000,
+                                max_tokens_per_batch=50000,
                                 shuffle=True
                                 )
             self.val_iterator = BucketBatchSamplerMax(
                                 self.val_data,
                                 batch_size = self.batch_size,
-                                max_tokens_per_batch=50000000,
+                                max_tokens_per_batch=2_000_000,
                                 drop_last=False,
                                 shuffle=False
                                 )
@@ -258,7 +258,7 @@ class PointCloudDataloader(pl.LightningDataModule):
             self.test_iterator = BatchIterator(
                                 self.test_data,
                                 batch_size = self.batch_size*10,
-                                max_tokens_per_batch=30000000,
+                                max_tokens_per_batch=5_000_000,
                                 drop_last=False,
                                 shuffle=False
                                 )
@@ -277,7 +277,7 @@ class PointCloudDataloader(pl.LightningDataModule):
         return self.test_dl
 if __name__=="__main__":
 
-    loader=PointCloudDataloader("middle",64,max=False,augmentation=False,scaler_path="./scaler_middle.gz")
+    loader=PointCloudDataloader("middle",64,max=True,augmentation=False,scaler_path="./")
     loader.setup("train")
 
     mins=torch.ones(4).unsqueeze(0)

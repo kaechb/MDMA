@@ -219,10 +219,10 @@ def make_plots(model_name, disco=False):
         params=sum(p.numel() for p in model.parameters() if p.requires_grad)
     params
     plotter = plotting_thesis(big=True)
-    plotter.plot_ratio_calo(model.hists_real, model.hists_fake, weighted=False, leg=2, model_name=model_name)
+    plotter.plot_ratio_calo(model.hists_real, model.hists_fake, weighted=False, leg=2, model_name=model_name+"_raw")
     plt.show()
-    plotter.plot_ratio_calo(model.weighted_hists_real, model.weighted_hists_fake, weighted=True, leg=2, model_name=model_name)
-    plotter.plot_response(model.response_real,model.response_fake,model_name=model_name)
+    plotter.plot_ratio_calo(model.weighted_hists_real, model.weighted_hists_fake, weighted=True, leg=2, model_name=model_name+"_raw")
+    plotter.plot_response(model.response_real,model.response_fake,model_name=model_name+"_raw")
     print("saved plots",model_name)
     if model.hparams.dataset=="calo":
         torch.save(model.fake,"/beegfs/desy/user/kaechben/data_generated/calochallenge_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))

@@ -300,7 +300,7 @@ with open('times.json', 'r') as json_file:
 if True:
     time_dict={}
     param_dict={}
-    for i,model_name in enumerate(["mdma_fm_calo","mdma_calo",]):#
+    for i,model_name in enumerate(["mdma_calo","mdma_fm_calo",]):#
         model,total,params=make_plots(model_name)
         time_dict[model_name]=total
         param_dict[model_name]=params
