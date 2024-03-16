@@ -37,7 +37,7 @@ lambda_gp: 10
 lambda_response: 0.1
 lr: 0.000001
 max: true
-max_epochs: 500
+max_epochs: 100
 mean_field_loss: true
 middle: false
 model: MDMA

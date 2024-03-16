@@ -130,10 +130,15 @@ from utils.dataloader_calo import PointCloudDataloader
 
 FONTSIZE=20
 
-def make_plots(model_name, disco=False):
+def make_plots(model_name,data_module, disco=False):
     import os
     ckptdir = "./ckpts/"
-    ckpt = "{}.ckpt".format(model_name)
+
+    if model_name.find("fm") >-1:
+        ckpt = "{}_small.ckpt".format(model_name)
+    else:
+        ckpt = "{}.ckpt".format(model_name)
+
     # ckpt = "t_{}.ckpt".format(model_name)
     ckpt = ckptdir + ckpt
     # Load state dictionary from checkpoint
@@ -151,12 +156,11 @@ def make_plots(model_name, disco=False):
     torch.set_float32_matmul_precision("medium")
     config["scaler_path"]="/home/kaechben/MDMACalo/"
     # Initialize data module and set up model
-    config["batch_size"]=100 if model_name=="mdma_fm_calo" else 100
+    config["batch_size"]=100
 
-    data_module = PointCloudDataloader(**config)
-    data_module.setup("validation")
+
     config["max"]=False
-    model = MDMA.load_from_checkpoint(ckpt,) if config["model"]!="FM" else FM(**config).load_from_checkpoint(ckpt, **config)
+    model = MDMA.load_from_checkpoint(ckpt,) if config["model"]!="FM" else FM.load_from_checkpoint(ckpt)
     model.eval_metrics=False
 
 # Assuming `model` is defined elsewhere in your code
@@ -191,7 +195,7 @@ def make_plots(model_name, disco=False):
                 devices=1,
                 precision=32,
                 accelerator="gpu",
-
+                logger=False,
                 enable_progress_bar=False,
                 default_root_dir="/gpfs/dust/maxwell/user/{}/{}".format(
                     os.environ["USER"], config["dataset"]
@@ -200,6 +204,7 @@ def make_plots(model_name, disco=False):
     with torch.no_grad():
         i=0
         trainer.test(model=model, dataloaders=data_module.test_dataloader())
+        print(len(model.batch))
             # i+=1
             # print(i)
             # mask=batch[1].cuda().bool()
@@ -269,6 +274,7 @@ def make_plots(model_name, disco=False):
         torch.save(model.batch,"/beegfs/desy/user/kaechben/data_generated/calochallenge_reals_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
         torch.save(model.masks,"/beegfs/desy/user/kaechben/data_generated/calochallenge_masks_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
         torch.save(model.conds,"/beegfs/desy/user/kaechben/data_generated/calochallenge_conds_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
+        torch.save(model.times,"/beegfs/desy/user/kaechben/data_generated/calochallenge_times_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
         #plotter.plot_corr(true.numpy(), fake.numpy(), model_name, disco=disco,leg=-1)
         # true = torch.cat([torch.nn.functional.pad(batch, (0, 0, 0, model.hparams.n_part - batch.size(1))) for batch in model.batch],dim=0) if model.hparams.max else torch.cat(model.batch)
 
@@ -292,7 +298,13 @@ def create_mask(n, size=30):
 
 torch.set_float32_matmul_precision("medium")
 import json
+import yaml
 
+config = config = yaml.load(
+        open("hparams/default_calo.yaml"), Loader=yaml.FullLoader
+    )
+data_module = PointCloudDataloader(**config)
+data_module.setup("train")
 with open('params.json', 'r') as json_file:
     param_dict = json.load(json_file)
 with open('times.json', 'r') as json_file:
@@ -300,8 +312,8 @@ with open('times.json', 'r') as json_file:
 if True:
     time_dict={}
     param_dict={}
-    for i,model_name in enumerate(["mdma_calo","mdma_fm_calo",]):#
-        model,total,params=make_plots(model_name)
+    for i,model_name in enumerate(["mdma_fm_calo","mdma_calo",]):#
+        model,total,params=make_plots(model_name,data_module)
         time_dict[model_name]=total
         param_dict[model_name]=params
 with open('params_calo.json', 'w') as json_file:

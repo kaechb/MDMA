@@ -164,15 +164,16 @@ class FM(pl.LightningModule):
                 fake=torch.cat([std_fake,pt_fake],dim=2)
             else:
                 fake= self.scaler.inverse_transform(fake)
+                fake[mask]=0
 
         else:
+            fake_scaled=fake.clone()
             fake= self.scaler.inverse_transform(fake)
             fake[:,:,2]=(fake[:,:,2]+torch.randint(0,self.hparams.bins[2], size=(fake.shape[0],1),device=fake.device).expand(-1,mask.shape[1]))%self.hparams.bins[2]
+            fake[mask]=0
 
 
-
-        fake[mask]=0
-        return fake,None
+        return fake,fake_scaled
     def on_load_checkpoint(self, checkpoint: dict) -> None:
         state_dict = checkpoint["state_dict"]
         model_state_dict = self.state_dict()
@@ -196,10 +197,21 @@ class FM(pl.LightningModule):
         #     state_dict=torch.load(self.hparams.ckpt,map_location="cuda")
         #     opt_g.load_state_dict(state_dict["optimizer_states"][0])
 
-        lr_scheduler= LinearWarmupCosineAnnealingLR(opt_g, warmup_epochs=self.trainer.max_epochs//10,max_epochs=self.trainer.max_epochs)
-        return {"optimizer":opt_g,"lr_scheduler":lr_scheduler}#({'optimizer': opt_g, 'frequency': 1, 'scheduler':None if not self.lr_schedule else scheduler})
-
-
+        lr_scheduler= LinearWarmupCosineAnnealingLR(opt_g, warmup_epochs=self.trainer.max_epochs*self.hparams.num_batches//10,max_epochs=self.trainer.max_epochs*self.hparams.num_batches)
+        print("max epochs",self.trainer.max_epochs,"num_steps",self.trainer.max_epochs*self.hparams.num_batches)
+        #return {"optimizer":opt_g,"lr_scheduler":lr_scheduler}#({'optimizer': opt_g, 'frequency': 1, 'scheduler':None if not self.lr_schedule else scheduler})
+        return  (
+            [opt_g],
+            [
+            {
+                'scheduler': lr_scheduler,
+                'interval': 'step',
+                'frequency': 1,
+                'reduce_on_plateau': False,
+                'monitor': 'val_loss',
+            }
+        ]
+        )
 
 
     def training_step(self, batch):
@@ -217,7 +229,7 @@ class FM(pl.LightningModule):
         ut[mask]=0
         loss = torch.mean((vt - ut) ** 2)
 
-
+        self.log("train/pointsperbatch", (~mask).int().sum(), on_step=True)
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=False)
         self.log("train/mean",vt[~mask].mean(), on_step=False, on_epoch=True, prog_bar=False)
         self.log("train/std",vt[~mask].std(), on_step=False, on_epoch=True, prog_bar=False)
@@ -237,7 +249,7 @@ class FM(pl.LightningModule):
                 batch[mask]=0
                 self.w1ps = []
                 start=time.time()
-                fake,_ = self.sampleandscale(batch=batch, mask=mask,cond=cond)
+                fake,_ = self.sampleandscale(batch=batch, mask=mask,cond=cond,num_samples=200)
                 self.times.append(time.time()-start)
 
                 # self.conds.append(cond.cpu())
@@ -386,6 +398,11 @@ class FM(pl.LightningModule):
     def on_test_epoch_start(self, *args, **kwargs):
         self.net.eval()
         self.times=[]
+        self.batch=[]
+        self.fake=[]
+        self.masks=[]
+        self.conds=[]
+        self.fake_unscaled=[]
         self.n_kde=self.data_module.n_kde
         self.m_kde=self.data_module.m_kde
         hists=get_hists(self.hparams.bins,self.scaled_mins.reshape(-1)*1.1,self.scaled_maxs.reshape(-1)*1.1,calo=self.hparams.dataset=="calo")
@@ -414,10 +431,10 @@ class FM(pl.LightningModule):
 
                 self.w1ps = []
                 start=time.time()
-                fake=self.sampleandscale(batch=batch, mask=mask,cond=cond,num_samples=200)[0]
+                fake,fake_scaled=self.sampleandscale(batch=batch, mask=mask,cond=cond,num_samples=200)
                 # fake = self.sample(batch=batch, mask=mask,cond=cond,num_samples=2)
 
-                # self.times.append((time.time()-start)/len(fake))
+                self.times.append((time.time()-start)/len(fake))
 
                 if self.hparams.dataset=="calo":
                     maxs=torch.tensor([6499, self.hparams.bins[1]-1,self.hparams.bins[2]-1,self.hparams.bins[3]-1],device=self.device)
@@ -434,7 +451,7 @@ class FM(pl.LightningModule):
                             self.weighted_hists_fake[i-1].fill(fake[~mask.squeeze(-1)][:, i].cpu().long().numpy(),weight=fake[~mask.squeeze(-1)][:, 0].cpu().numpy())
                     self.response_real.fill(response_real)
                     self.response_fake.fill(response_fake)
-
+                self.fake_unscaled.append(fake_scaled.cpu())
 
                 batch=batch.reshape(-1,batch.shape[1],batch.shape[2])
                 fake=fake.reshape(-1,batch.shape[1],batch.shape[2])

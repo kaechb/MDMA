@@ -255,7 +255,7 @@ class plotting_thesis():
 
         ax_ratio.tick_params(axis='x', which='both', labelbottom=True)
         plt.tight_layout(pad=0.3)
-        plt.savefig(f"plots/calo/response_{model_name}{self.big}.pdf",format="pdf")
+        plt.savefig(f"plots/calo/response_{model_name}.pdf",format="pdf")
         plt.show()
 
     def plot_ratio(self,h_real,h_fake,weighted,leg=-1,model_name="",n_part=30,log=False):

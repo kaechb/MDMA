@@ -1,6 +1,6 @@
 ---
 avg_n: 70
-batch_size: 128
+batch_size: 1024
 bins:
   - 100
   - 45
@@ -13,22 +13,23 @@ names:
   - R
 boxcox: false
 cond_dim: 2
-ckpt: "./ckpts/mdma_fm_calo.ckpt"
+ckpt: "" # /ckpts/mdma_fm_calo_big_small.ckpt
 dataset: calo
 decay: 0.999
 dropout: 0
+drop_last: true
 E_loss: false
 ema: false
 ema_start: 50000
 frequencies: 8
 exact: false
 glu: true
-heads: 8
-hidden_dim: 1024
+heads: 16
+hidden_dim: 512
 lambda_gp:  0
 lambda_response: 0.
-latent: 64
-layers: 8
+latent: 16
+layers: 16
 lr: 0.00001
 max: true
 max_epochs: 500
@@ -37,7 +38,7 @@ middle: false
 n_dim: 4
 n_part: 10000
 name: calo
-num_heads: 32
+num_heads: 16
 opt: AdamW
 parton: t
 sampler: true

@@ -40,7 +40,7 @@ from utils.helpers import *
 if len(sys.argv) > 1:
     NAME = sys.argv[1]
 else:
-    NAME = "jet_nf"
+    NAME = "calo_fm"
 
 def setup_scaler_calo(config, data_module,model):
         model.scaler=data_module.scaler
@@ -72,7 +72,7 @@ def setup_model(config, data_module=None, model=False):
     Returns:
         object: The configured model object.
     """
-    config["num_batches"] = data_module.num_batches
+
 
     if not model and config["model"] == "MDMA":
         model = MDMA(**config)
@@ -141,6 +141,21 @@ def train(config, logger, data_module, ckpt=False):
     print("This is run: ", logger.experiment.name)
     print("config:", config)
     torch.set_float32_matmul_precision("medium")
+    mins = torch.ones(config["n_dim"]).unsqueeze(0)
+    maxs = torch.ones(config["n_dim"]).unsqueeze(0)
+    n = []
+    num_batches=0
+    for i in data_module.train_dataloader():
+        mins = torch.min(
+            torch.cat((mins, i[0][~i[1]].min(0, keepdim=True)[0]), dim=0), dim=0
+        )[0].unsqueeze(0)
+        maxs = torch.max(
+            torch.cat((maxs, i[0][~i[1]].max(0, keepdim=True)[0]), dim=0), dim=0
+        )[0].unsqueeze(0)
+        n.append((~i[1]).sum(1))
+        num_batches+=1
+        config["avg_n"] = torch.cat(n, dim=0).float().mean()
+    config["num_batches"]=num_batches
     if not ckpt:
         model = setup_model(config, data_module, model=False)
     else:
@@ -150,7 +165,7 @@ def train(config, logger, data_module, ckpt=False):
 
             elif (config["dataset"] == "calo" and "middle" in config.keys() and config["middle"] == False):
                 model = MDMA.load_from_checkpoint(
-                    ckpt,strict=True, bins=config["bins"],lr=config["lr"],max=config["max"],middle=config["middle"]
+                    ckpt,strict=True, bins=config["bins"],lr=config["lr"],max=config["max"],middle=config["middle"],num_batches=num_batches
                 )
                 model=setup_scaler_calo(config, data_module,model)
 
@@ -159,7 +174,7 @@ def train(config, logger, data_module, ckpt=False):
             if config["dataset"] == "jet" and config["n_part"] == 150:
                 model = FM.load_from_checkpoint(ckpt, **config)
             else:
-                model = FM.load_from_checkpoint(ckpt, bins=config["bins"],lr=config["lr"],exact=config["exact"],middle=config["middle"],max=config["max"])
+                model = FM.load_from_checkpoint(ckpt, bins=config["bins"],lr=config["lr"],exact=config["exact"],middle=config["middle"],max=config["max"],num_batches=num_batches)
         elif config["model"] == "NF":
             model = NF.load_from_checkpoint(ckpt, lambda_m=config["lambda_m"],mass_loss=config["mass_loss"],)
         elif config["model"] == "PNF":
@@ -173,17 +188,7 @@ def train(config, logger, data_module, ckpt=False):
     model.load_datamodule(data_module)
 
     # loop once through dataloader to find mins and maxs to clamp during training
-    mins = torch.ones(config["n_dim"]).unsqueeze(0)
-    maxs = torch.ones(config["n_dim"]).unsqueeze(0)
-    n = []
-    for i in data_module.train_dataloader():
-        mins = torch.min(
-            torch.cat((mins, i[0][~i[1]].min(0, keepdim=True)[0]), dim=0), dim=0
-        )[0].unsqueeze(0)
-        maxs = torch.max(
-            torch.cat((maxs, i[0][~i[1]].max(0, keepdim=True)[0]), dim=0), dim=0
-        )[0].unsqueeze(0)
-        n.append((~i[1]).sum(1))
+
     model.maxs = maxs.cuda()
     model.mins = mins.cuda()
     model.avg_n = torch.cat(n, dim=0).float().cuda().mean()
@@ -193,6 +198,7 @@ def train(config, logger, data_module, ckpt=False):
     trainer = pl.Trainer(
         devices=1,
         precision=32,
+        accumulate_grad_batches=5 if config["model"]=="FM" and config["dataset"]=="calo" and config["middle"]==False else 1,
         accelerator="gpu",
         logger=logger,
         gradient_clip_val=0.5 if config["model"] == "FM" else None,
@@ -200,7 +206,7 @@ def train(config, logger, data_module, ckpt=False):
         max_epochs=config["max_epochs"],
         callbacks=callbacks,
         val_check_interval=(
-            10000
+            5000
             if (config["dataset"] == "calo") and config["model"] == "FM"
             else 5000 if config["dataset"] == "calo" else None
         ),
@@ -214,7 +220,7 @@ def train(config, logger, data_module, ckpt=False):
             )
         ),
         num_sanity_val_steps=1,
-        limit_val_batches=100,
+        limit_val_batches=10,
         enable_progress_bar=False,
         default_root_dir="/beegfs/desy/user/{}/{}".format(
             os.environ["USER"], config["dataset"]
@@ -282,6 +288,14 @@ if __name__ == "__main__":
                 save_top_k=2,
                 mode="min",
                 filename="{epoch}-{w1p:.5f}-{weighted_w1p:.5f}",
+                every_n_epochs=1,
+            ),
+            pl.callbacks.LearningRateMonitor(logging_interval="step"),
+            ModelCheckpoint(
+                monitor="weighted_z",
+                save_top_k=2,
+                mode="min",
+                filename="{epoch}-{w1p:.5f}-{weighted_w1p:.5f}-{weighted_z:.5f}",
                 every_n_epochs=1,
             ),
             pl.callbacks.LearningRateMonitor(logging_interval="step"),

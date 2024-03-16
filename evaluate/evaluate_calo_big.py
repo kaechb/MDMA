@@ -153,15 +153,12 @@ def make_plots(model_name, disco=False):
     # Initialize data module and set up model
     config["batch_size"]=1000 if model_name=="mdma_fm_calo_big" else 32
     config["middle"]=False
+    config["max"]=True
     data_module = PointCloudDataloader(**config)
     data_module.setup("validation")
-    config["max"]=True
     config = torch.load(ckpt)["hyper_parameters"]
-
-    model = MDMA.load_from_checkpoint(ckpt,) if config["model"]!="FM" else FM(**config).load_from_checkpoint(ckpt, **config)
+    model = MDMA.load_from_checkpoint(ckpt,) if config["model"]!="FM" else FM.load_from_checkpoint(ckpt)
     model.eval_metrics=False
-
-# Assuming `model` is defined elsewhere in your code
 
     setup_model_with_data(model, data_module, config)
 
@@ -179,7 +176,8 @@ def make_plots(model_name, disco=False):
     model.conds=[]
     model=model.cuda()
     if config["model"]=="FM":
-        model.net.avg_n=torch.cat(n).float().mean().item()
+        None
+        # model.net.avg_n=torch.cat(n).float().mean().item()
     else:
         model.gen_net.avg_n=torch.cat(n).float().mean().item()
 
@@ -194,7 +192,7 @@ def make_plots(model_name, disco=False):
                 devices=1,
                 precision=32,
                 accelerator="gpu",
-
+                # limit_test_batches=40,
                 enable_progress_bar=False,
                 default_root_dir="/gpfs/dust/maxwell/user/{}/{}".format(
                     os.environ["USER"], config["dataset"]
@@ -217,7 +215,7 @@ def make_plots(model_name, disco=False):
     except:
 
         params=sum(p.numel() for p in model.parameters() if p.requires_grad)
-    params
+    print("params",params,"time",total)
     plotter = plotting_thesis(big=True)
     plotter.plot_ratio_calo(model.hists_real, model.hists_fake, weighted=False, leg=2, model_name=model_name+"_raw")
     plt.show()
@@ -228,7 +226,10 @@ def make_plots(model_name, disco=False):
         torch.save(model.fake,"/beegfs/desy/user/kaechben/data_generated/calochallenge_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
         torch.save(model.batch,"/beegfs/desy/user/kaechben/data_generated/calochallenge_reals_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
         torch.save(model.masks,"/beegfs/desy/user/kaechben/data_generated/calochallenge_masks_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
+
         torch.save(model.conds,"/beegfs/desy/user/kaechben/data_generated/calochallenge_conds_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
+        torch.save(model.times,"/beegfs/desy/user/kaechben/data_generated/calochallenge_times_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
+
         #plotter.plot_corr(true.numpy(), fake.numpy(), model_name, disco=disco,leg=-1)
         # true = torch.cat([torch.nn.functional.pad(batch, (0, 0, 0, model.hparams.n_part - batch.size(1))) for batch in model.batch],dim=0) if model.hparams.max else torch.cat(model.batch)
 
@@ -260,7 +261,7 @@ with open('times.json', 'r') as json_file:
 if True:
     # time_dict={}
     # param_dict={}
-    for i,model_name in enumerate(["mdma_calo_big","mdma_fm_calo_big"]):#
+    for i,model_name in enumerate(["mdma_fm_calo_big","mdma_calo_big",]):#
         model,total,params=make_plots(model_name)
         time_dict[model_name]=total
         param_dict[model_name]=params

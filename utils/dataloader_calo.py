@@ -75,6 +75,7 @@ class BatchIterator:
         else:
             raise StopIteration
 
+
 class CustomDataset(Dataset):
     def __init__(self, data, E):
         assert len(data) == len(E), "The lengths of data and E are not equal"
@@ -193,13 +194,13 @@ class PointCloudDataloader(pl.LightningDataModule):
         self.E=self.data["Egen"]
         self.data=self.data["E_z_alpha_r"]
         self.val_data=torch.load(f"/beegfs/desy/user/kaechben/calochallenge/pc_test_{self.dataset}.pt")
-
         self.test_E=self.val_data["Egen"]
         self.test_data=self.val_data["E_z_alpha_r"]
-        self.val_E=self.val_data["Egen"][:self.batch_size*100]
-        self.val_data=self.val_data["E_z_alpha_r"][:self.batch_size*100]
+        self.val_E=self.val_data["Egen"]
+        self.val_data=self.val_data["E_z_alpha_r"]
+        print(len(self.val_data))
 
-        self.num_batches = len(self.data)//self.batch_size
+
         self.scaler = ScalerBase(
                         transfs=[PowerTransformer(method="box-cox", standardize=True),
                             Pipeline([('dequantization', DQLinear(name=self.name)),('minmax_scaler', MinMaxScaler(feature_range=(1e-5, 1-1e-5))),('logit_transformer', LogitTransformer()),("standard_scaler",StandardScaler())]),
@@ -223,7 +224,7 @@ class PointCloudDataloader(pl.LightningDataModule):
                                 self.data,
                                 batch_size = self.batch_size,
                                 drop_last=True,
-                                max_tokens_per_batch=50000,
+                                max_tokens_per_batch=40_000 if self.dataset=="big" else 200_000,
                                 shuffle=True
                                 )
             self.val_iterator = BucketBatchSamplerMax(
@@ -236,7 +237,7 @@ class PointCloudDataloader(pl.LightningDataModule):
             self.test_iterator = BucketBatchSamplerMax(
                                 self.test_data,
                                 batch_size = self.batch_size,
-                                max_tokens_per_batch=5_000_000,
+                                max_tokens_per_batch=500_000,
                                 drop_last=False,
                                 shuffle=False
                                 )
