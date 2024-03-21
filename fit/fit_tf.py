@@ -101,12 +101,16 @@ class TF(pl.LightningModule):
         fake[mask] = 0  # set the masked values to zero
         if scale:
 
-            fake=fake.reshape(-1,self.hparams.n_part,self.hparams.n_dim)
-            std_fake=fake[:,:,:2]
-            pt_fake=fake[:,:,-1:]
-            std_fake= self.scaler.inverse_transform(std_fake)
-            pt_fake= self.pt_scaler.inverse_transform(pt_fake)
-            fake=torch.cat([std_fake,pt_fake],dim=2)
+            if self.hparams.boxcox:
+                std_fake=fake[:,:,:2]
+                pt_fake=fake[:,:,-1:]
+                std_fake= self.scaler.inverse_transform(std_fake)
+                pt_fake= self.pt_scaler.inverse_transform(pt_fake)
+
+                fake=torch.cat([std_fake,pt_fake],dim=2)
+            else:
+                fake=self.scaler.inverse_transform(fake)
+            fake[mask]=0
             return fake
         else:
             return fake

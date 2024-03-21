@@ -130,7 +130,7 @@ from utils.dataloader_calo import PointCloudDataloader
 
 FONTSIZE=20
 
-def make_plots(model_name,data_module, disco=False):
+def make_plots(model_name,data_module, disco=False,raw=False):
     import os
     ckptdir = "./ckpts/"
 
@@ -160,7 +160,7 @@ def make_plots(model_name,data_module, disco=False):
 
 
     config["max"]=False
-    model = MDMA.load_from_checkpoint(ckpt,) if config["model"]!="FM" else FM.load_from_checkpoint(ckpt)
+    model = MDMA.load_from_checkpoint(ckpt,raw=raw) if config["model"]!="FM" else FM.load_from_checkpoint(ckpt)
     model.eval_metrics=False
 
 # Assuming `model` is defined elsewhere in your code
@@ -205,51 +205,6 @@ def make_plots(model_name,data_module, disco=False):
         i=0
         trainer.test(model=model, dataloaders=data_module.test_dataloader())
         print(len(model.batch))
-            # i+=1
-            # print(i)
-            # mask=batch[1].cuda().bool()
-            # cond=batch[2].cuda().float()
-            # batch=batch[0].cuda()
-            # model.batch.append(batch.cpu())
-            # mask_fake=mask#create_mask(torch.from_numpy(n),size=n.max()).cuda().bool()
-            # # mask_fake=mask.clone()
-            # start=time.time()
-            # fake,_=model.sampleandscale(batch.cuda(),mask=mask_fake, cond=cond ,scale=True)
-
-            # # fake[~mask_fake]= model.scaler.inverse_transform(fake[~mask_fake])
-            # fake[mask_fake]=0
-            # fake[:,:,2]=(fake[:,:,2]+torch.randint(0,model.bins[2],(fake.size(0),fake.size(1))).cuda())%model.bins[2]
-            # fake[:,:,1:]=torch.clamp(fake[:,:,1:],min=torch.zeros_like(fake.reshape(-1,4)[0,1:]).cuda(),max=maxs[:,1:].cuda())
-            # model.times.append((time.time()-start)/batch.size(0))
-        # fake=fake.clamp(mins.to(fake.device),maxs.to(fake.device))
-        # batch=batch.clamp(mins.to(fake.device),maxs.to(fake.device))
-        # batch=model.scaler.inverse_transform(batch)
-        # model.fake.append(fake.cpu())
-        # model.masks.append(mask_fake.cpu())
-
-        # model.conds.append((cond.cpu()[:,:,0]+10).exp().reshape(-1))
-        # fake= torch.cat([torch.nn.functional.pad(batch, (0, 0, 0, model.hparams.n_part - batch.size(1))) for batch in model.fake],dim=0)
-        # batch= torch.cat([torch.nn.functional.pad(batch, (0, 0, 0, model.hparams.n_part - batch.size(1))) for batch in model.batch],dim=0)
-        # mask= torch.cat([torch.nn.functional.pad(batch, (0, 0, 0, model.hparams.n_part - batch.size(1))) for batch in model.masks],dim=0)
-        # mask_fake=mask
-        # cond=torch.cat(model.conds)
-        # assert len(model.batch)>0
-        # for var in range(4):
-        #     hists["hists_real"][var].fill(batch[~mask][:, var].long().cpu().numpy())
-        #     hists["hists_fake"][var].fill(fake[~mask_fake][:, var].long().cpu().numpy())
-        #     if var>0:
-        #         hists["weighted_hists_fake"][var-1].fill(fake[~mask_fake][:, var].long().cpu().numpy(), weight=fake[~mask_fake][:,0].cpu().numpy())
-        #         hists["weighted_hists_real"][var-1].fill(batch[~mask][:, var].long().cpu().numpy(), weight=batch[~mask][:,0].cpu().numpy())
-        # response_fake=fake[:,:, 0].sum(1).reshape(-1)/(cond[:, :,0] + 10).exp().reshape(-1)
-        # response_real=batch[:,:, 0].sum(1).sreshape(-1)/(cond[:, :,0] + 10).exp().reshape(-1)
-        # response_real=response_real.clamp(min_response,max_response*0.99).cpu().numpy()
-        # response_fake=response_fake.clamp(min_response,max_response*0.99).cpu().numpy()
-
-        # hists["response_fake"].fill(response_fake)
-        # hists["response_real"].fill(response_real)
-
-
-
 
 
     # Plotting
@@ -264,10 +219,12 @@ def make_plots(model_name,data_module, disco=False):
         params=sum(p.numel() for p in model.parameters() if p.requires_grad)
     params
     plotter = plotting_thesis()
-    plotter.plot_ratio_calo(model.hists_real, model.hists_fake, weighted=False, leg=2, model_name=model_name)
+    if raw:
+        model_name+="_raw"
+    plotter.plot_ratio_calo(model.hists_real, model.hists_fake, weighted=False, leg=2-int(raw), model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow")
     plt.show()
-    plotter.plot_ratio_calo(model.weighted_hists_real, model.weighted_hists_fake, weighted=True, leg=2, model_name=model_name)
-    plotter.plot_response(model.response_real,model.response_fake,model_name=model_name)
+    plotter.plot_ratio_calo(model.weighted_hists_real, model.weighted_hists_fake, weighted=True, leg=2-int(raw), model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow")
+    plotter.plot_response(model.response_real,model.response_fake,model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow")
     print("saved plots",model_name)
     if model.hparams.dataset=="calo":
         torch.save(model.fake,"/beegfs/desy/user/kaechben/data_generated/calochallenge_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
@@ -299,21 +256,21 @@ def create_mask(n, size=30):
 torch.set_float32_matmul_precision("medium")
 import json
 import yaml
-
+raw=False
 config = config = yaml.load(
         open("hparams/default_calo.yaml"), Loader=yaml.FullLoader
     )
 data_module = PointCloudDataloader(**config)
 data_module.setup("train")
-with open('params.json', 'r') as json_file:
+with open('params_calo.json', 'r') as json_file:
     param_dict = json.load(json_file)
-with open('times.json', 'r') as json_file:
+with open('times_calo.json', 'r') as json_file:
     time_dict = json.load(json_file)
 if True:
     time_dict={}
     param_dict={}
-    for i,model_name in enumerate(["mdma_fm_calo","mdma_calo",]):#
-        model,total,params=make_plots(model_name,data_module)
+    for i,model_name in enumerate(["mdma_calo",]):#"mdma_fm_calo",
+        model,total,params=make_plots(model_name,data_module,raw=raw)
         time_dict[model_name]=total
         param_dict[model_name]=params
 with open('params_calo.json', 'w') as json_file:

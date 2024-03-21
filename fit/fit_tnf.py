@@ -38,10 +38,13 @@ class TNF(pl.LightningModule):
         self.automatic_optimization = False
         self.gen_net = TGen(**hparams)
         self.dis_net = TDisc(**hparams)
+        if not hparams["boxcox"]:
+            hparams["ckpt_flow"]="ckpts/t_nf.ckpt"
         if hparams["ckpt_flow"].find("jetnet30")>-1:
             hparams["ckpt_flow"] = hparams["ckpt_flow"].replace("jetnet30/", "")
         state_dict = torch.load( hparams["ckpt_flow"])["state_dict"]
         config = torch.load( hparams["ckpt_flow"])["hyper_parameters"]
+
         flow_state_dict = {
             k.replace("flow.", ""): v for k, v in state_dict.items() if "flow" in k
         }
@@ -113,18 +116,18 @@ class TNF(pl.LightningModule):
             z[mask] = 0  # Since mean field is initialized by sum, we need to set the masked values to zero
 
         fake = self.gen_net(z,mask=mask.clone(),)
-        fake[mask] = 0  # set the masked values to zero
+        # set the masked values to zero
         if scale:
-            fake=fake.reshape(-1,self.hparams.n_part,self.hparams.n_dim)
-            std_fake=fake[:,:,:2]
-            pt_fake=fake[:,:,-1:]
-            std_fake= self.scaler.inverse_transform(std_fake)
-            pt_fake= self.pt_scaler.inverse_transform(pt_fake)
-            fake=torch.cat([std_fake,pt_fake],dim=2)
-            fake[mask]=0
-            return fake
-        else:
-            return fake
+            if self.hparams.boxcox:
+                std_fake=fake[:,:,:2]
+                pt_fake=fake[:,:,-1:]
+                std_fake= self.scaler.inverse_transform(std_fake)
+                pt_fake= self.pt_scaler.inverse_transform(pt_fake)
+                fake=torch.cat([std_fake,pt_fake],dim=2)
+            else:
+                fake=self.scaler.inverse_transform(fake)
+        fake[mask]=0
+        return fake
 
     def _gradient_penalty(self, real_data, generated_data, mask, cond):
         """Calculates the gradient penalty loss for WGAN GP, interpolated events always have the same number hits/particles"""
@@ -341,7 +344,11 @@ class TNF(pl.LightningModule):
             fpd_ = fpd(self.true_fpd, fake_fpd, max_samples=len(real))
             fpd_log = fpd_[0]
             self.log("actual_fpd", fpd_[0], on_step=False, prog_bar=False, logger=True)
-        if w1m_<self.w1m_best:  # only log images if w1m is better than before because it takes a lot of time
+        if (
+           True
+        ):  # only log images if w1m is better than before because it takes a lot of time
+
+
             self.plot = plotting_point_cloud(step=self.global_step, logger=self.logger)
             try:
                 self.plot.plot_jet(self.hists_real, self.hists_fake)

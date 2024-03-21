@@ -62,14 +62,14 @@ class Block(nn.Module):
         self.ln = nn.LayerNorm(hidden)
         self.glu=glu
 
-    def forward(self, x, x_cls,cond, mask):
+    def forward(self, x, x_cls,cond, mask,need_weights=False):
         res = x.clone()
 
         x = self.fc0(self.act(x))
         if self.cloudnorm:
             x = self.cloudnorm(x,mask)
         x_cls = self.ln(self.fc0(self.act(x_cls)))
-        x_cls,w = self.attn(x_cls, x, x, key_padding_mask=mask,need_weights=False)
+        x_cls,w = self.attn(x_cls, x, x, key_padding_mask=mask,need_weights=need_weights)
 
         if self.glu:
             x_cls = self.act(F.glu(torch.cat((x_cls,self.cond_cls(cond[...,:])),dim=-1)))

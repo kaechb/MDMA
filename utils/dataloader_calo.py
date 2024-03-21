@@ -75,6 +75,9 @@ class BatchIterator:
         else:
             raise StopIteration
 
+    def __len__(self):
+        """Return the number of batches."""
+        return len(self.batches)
 
 class CustomDataset(Dataset):
     def __init__(self, data, E):
@@ -87,32 +90,7 @@ class CustomDataset(Dataset):
 
     def __len__(self):
         return len(self.data)
-class BucketBatchSampler(BatchSampler):
-    def __init__(self, data_source, batch_size, shuffle=True, drop_last=True):
-        self.data_source = data_source
-        self.batch_size = batch_size
-        self.shuffle = shuffle
-        self.drop_last = drop_last
 
-
-    def __iter__(self):
-        indices = list(range(len(self.data_source)))
-        # Sort sequences by length
-        indices = sorted(indices, key=lambda x: len(self.data_source[x]))
-        # Create batches based on the sorted indices
-        batches = [indices[i:i + self.batch_size] for i in range(0, len(indices), self.batch_size)]
-        if self.shuffle:
-            np.random.shuffle(batches)
-        if self.drop_last or len(batches[-1]) ==0:
-            batches = batches[:-1]
-        for batch in batches:
-            yield batch
-
-    def __len__(self):
-        if self.drop_last:
-            return len(self.data_source) // self.batch_size
-        else:
-            return (len(self.data_source) + self.batch_size -1) // self.batch_size
 
 
 
@@ -127,47 +105,6 @@ def pad_collate_fn(batch,avg_n):
     return padded_batch,mask,cond
 
 
-# Pad the sequences using pad_sequence()
-
-
-class BucketBatchSamplerMax(BatchSampler):
-    def __init__(self, data_source, batch_size, max_tokens_per_batch=4000, shuffle=True, drop_last=True):
-        self.data_source = data_source
-        self.max_tokens_per_batch = max_tokens_per_batch
-        self.shuffle = shuffle
-        self.drop_last = drop_last
-        self.batch_size=batch_size
-
-    def __iter__(self):
-        indices = list(range(len(self.data_source)))
-        # Sort sequences by length
-        indices = sorted(indices, key=lambda x: len(self.data_source[x]))
-        # Create batches based on the total number of tokens per batch
-        batches = []
-        batch = []
-        batch_tokens = 0
-        for idx in indices:
-            sample_len = len(self.data_source[idx])
-            if batch_tokens + sample_len > self.max_tokens_per_batch or len(batch) >= self.batch_size:
-
-                batches.append(batch)
-                batch = []
-                batch_tokens = 0
-            batch.append(idx)
-            batch_tokens += sample_len
-        if not self.drop_last and len(batch) > 0:
-            batches.append(batch)
-
-        if self.shuffle:
-            np.random.shuffle(batches)
-        for batch in batches:
-            yield batch
-
-    def __len__(self):
-        if not self.drop_last:
-            return len(self.data_source) // self.batch_size+1
-        else:
-            return (len(self.data_source) + self.batch_size ) // self.batch_size
 class PointCloudDataloader(pl.LightningDataModule):
     """This is more or less standard boilerplate coded that builds the data loader of the training
     one thing to note is the custom standard scaler that works on tensors
@@ -213,53 +150,25 @@ class PointCloudDataloader(pl.LightningDataModule):
         self.mins=torch.ones(4).unsqueeze(0)
         self.maxs=torch.ones(4).unsqueeze(0)
         n=[]
-        # for d in self.data:
-        #     if len(d)>0:
-        #         self.mins=torch.cat((self.mins,d.reshape(-1,4).min(0,keepdim=True)[0])).min(0,keepdim=True)[0]
-        #         self.maxs=torch.cat((self.maxs,d.reshape(-1,4).max(0,keepdim=True)[0])).max(0,keepdim=True)[0]
-        #         n.append(len(d))
-        # self.avg_n=float(sum(n)/len(n))
-        if self.max:
-            self.train_iterator = BucketBatchSamplerMax(
-                                self.data,
-                                batch_size = self.batch_size,
-                                drop_last=True,
-                                max_tokens_per_batch=40_000 if self.dataset=="big" else 200_000,
-                                shuffle=True
-                                )
-            self.val_iterator = BucketBatchSamplerMax(
-                                self.val_data,
-                                batch_size = self.batch_size,
-                                max_tokens_per_batch=2_000_000,
-                                drop_last=False,
-                                shuffle=False
-                                )
-            self.test_iterator = BucketBatchSamplerMax(
-                                self.test_data,
-                                batch_size = self.batch_size,
+
+        self.train_iterator = BatchIterator(
+                            self.data,
+                            batch_size = self.batch_size,
+                            max_tokens_per_batch=500000,
+                            drop_last=True,
+                            shuffle=True
+                            )
+        self.val_iterator = BatchIterator(
+                            self.val_data,
+                            batch_size = self.batch_size,
+                            max_tokens_per_batch=500000,
+                            drop_last=False,
+                            shuffle=True
+                            )
+        self.test_iterator = BatchIterator(
+                            self.test_data,
+                            batch_size = self.batch_size*10,
                                 max_tokens_per_batch=500_000,
-                                drop_last=False,
-                                shuffle=False
-                                )
-        else:
-            self.train_iterator = BatchIterator(
-                                self.data,
-                                batch_size = self.batch_size,
-                                max_tokens_per_batch=300000,
-                                drop_last=True,
-                                shuffle=True
-                                )
-            self.val_iterator = BatchIterator(
-                                self.val_data,
-                                batch_size = self.batch_size,
-                                max_tokens_per_batch=300000,
-                                drop_last=False,
-                                shuffle=True
-                                )
-            self.test_iterator = BatchIterator(
-                                self.test_data,
-                                batch_size = self.batch_size*10,
-                                max_tokens_per_batch=5_000_000,
                                 drop_last=False,
                                 shuffle=False
                                 )

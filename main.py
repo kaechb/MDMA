@@ -40,7 +40,7 @@ from utils.helpers import *
 if len(sys.argv) > 1:
     NAME = sys.argv[1]
 else:
-    NAME = "calo_fm"
+    NAME = "jet_tnf"
 
 def setup_scaler_calo(config, data_module,model):
         model.scaler=data_module.scaler
@@ -114,16 +114,15 @@ def setup_model(config, data_module=None, model=False):
         model.n_dim = 3
         if config["boxcox"]:
 
-            model.scaler = data_module.scaler[0]
+            model.scaler = data_module.scaler[0].to("cuda")
             model.pt_scaler= data_module.scaler[1]
         else:
-            model.scaler=data_module.scaler
+            model.scaler=data_module.scaler.to("cuda")
         model.w1m_best = 0.01
 
     if config["dataset"] == "jet":
         model.scaled_mins = torch.tensor(data_module.mins).cuda()
         model.scaled_maxs = torch.tensor(data_module.maxs).cuda()
-        model.scaler.to("cuda")
     else:
         model.scaled_mins = torch.zeros(4).cuda()
         model.scaled_maxs = torch.tensor([1e9] + model.bins[1:]).cuda()
@@ -198,7 +197,7 @@ def train(config, logger, data_module, ckpt=False):
     trainer = pl.Trainer(
         devices=1,
         precision=32,
-        accumulate_grad_batches=5 if config["model"]=="FM" and config["dataset"]=="calo" and config["middle"]==False else 1,
+        # accumulate_grad_batches=5 if config["model"]=="FM" and config["dataset"]=="calo" and config["middle"]==False else 1,
         accelerator="gpu",
         logger=logger,
         gradient_clip_val=0.5 if config["model"] == "FM" else None,
@@ -206,21 +205,20 @@ def train(config, logger, data_module, ckpt=False):
         max_epochs=config["max_epochs"],
         callbacks=callbacks,
         val_check_interval=(
-            5000
+            10000 if config["dataset"] == "calo" and config["middle"]==False  and config["model"] == "FM" else 30000
             if (config["dataset"] == "calo") and config["model"] == "FM"
-            else 5000 if config["dataset"] == "calo" else None
+            else 50000 if config["dataset"] == "calo" else None
         ),
         check_val_every_n_epoch=(
             1
             if config["model"] == "PNF"
             else (
-                50
-                if (config["ckpt"] == "" and config["dataset"] == "jet")
-                else 5 if (config["dataset"] == "jet") else None
+                10  if (config["ckpt"] == "" and config["dataset"] == "jet")
+                else 500 if (config["dataset"] == "jet") else None
             )
         ),
         num_sanity_val_steps=1,
-        limit_val_batches=10,
+        limit_val_batches=100,
         enable_progress_bar=False,
         default_root_dir="/beegfs/desy/user/{}/{}".format(
             os.environ["USER"], config["dataset"]
@@ -258,7 +256,10 @@ if __name__ == "__main__":
     if config["dataset"] == "calo":
         from utils.dataloader_calo import PointCloudDataloader
     else:
-        from utils.dataloader_jetnet import PointCloudDataloader
+        if config["boxcox"]:
+            from utils.dataloader_jetnet import PointCloudDataloader
+        else:
+            from utils.dataloader_jetnet_std import PointCloudDataloader
 
     data_module = PointCloudDataloader(**config)
     data_module.setup("train")

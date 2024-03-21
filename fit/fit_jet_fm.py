@@ -38,7 +38,7 @@ from torchcfm.conditional_flow_matching import (
     SchrodingerBridgeConditionalFlowMatcher)
 from torchdyn.core import NeuralODE
 from pl_bolts.optimizers.lr_scheduler import LinearWarmupCosineAnnealingLR
-from models.fm_models import MDMA
+
 from utils.helpers import get_hists, mass, plotting_point_cloud, sample_kde, create_mask
 from copy import deepcopy
 from torch.cuda import amp
@@ -80,7 +80,10 @@ class FM(pl.LightningModule):
         self.times=[]
         #This is the Normalizing flow model to be used later, it uses as many
         #coupling_layers as given in the config
-
+        if self.hparams.boxcox:
+            from models.fm_models import MDMA
+        else:
+            from models.fm_models_std import MDMA
         self.net = MDMA(**self.hparams).to("cuda")
 
         self.FM = TargetConditionalFlowMatcher(sigma=0.) if self.hparams.exact=="target" else ConditionalFlowMatcher(sigma=0.) if not self.hparams.exact else ExactOptimalTransportConditionalFlowMatcher()
@@ -155,19 +158,22 @@ class FM(pl.LightningModule):
             because calculating the mass is a non linear transformation and does not commute with the mass calculation'''
         print(self.device)
         fake=self.sample(batch,mask,cond,num_samples=num_samples)
+        fake_scaled=fake.clone()
+
         if self.hparams.dataset=="jet":
+            print("boxcox:",self.hparams.boxcox)
             if self.hparams.boxcox:
                 std_fake=fake[:,:,:2]
                 pt_fake=fake[:,:,-1:]
                 std_fake= self.scaler.inverse_transform(std_fake)
                 pt_fake= self.pt_scaler.inverse_transform(pt_fake)
                 fake=torch.cat([std_fake,pt_fake],dim=2)
+                fake[mask]=0
             else:
                 fake= self.scaler.inverse_transform(fake)
                 fake[mask]=0
 
         else:
-            fake_scaled=fake.clone()
             fake= self.scaler.inverse_transform(fake)
             fake[:,:,2]=(fake[:,:,2]+torch.randint(0,self.hparams.bins[2], size=(fake.shape[0],1),device=fake.device).expand(-1,mask.shape[1]))%self.hparams.bins[2]
             fake[mask]=0
@@ -233,8 +239,8 @@ class FM(pl.LightningModule):
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=False)
         self.log("train/mean",vt[~mask].mean(), on_step=False, on_epoch=True, prog_bar=False)
         self.log("train/std",vt[~mask].std(), on_step=False, on_epoch=True, prog_bar=False)
-        if loss>10:
-            return None
+        # if loss>10:
+        #     return None
         return {"loss": loss}
 
 
@@ -258,10 +264,8 @@ class FM(pl.LightningModule):
                 if self.hparams.dataset=="jet":
                     batch=batch.reshape(-1,batch.shape[1],self.n_dim)
                     fake=fake.reshape(-1,batch.shape[1],self.n_dim)
-
                     self.batch.append(batch.cpu())
                     self.fake.append(fake.cpu())
-
                     self.masks.append(mask.cpu())
                     for i in range(self.n_dim):
                         self.hists_real[i].fill(batch[~mask.squeeze(-1)][:, i].cpu().numpy())
@@ -331,10 +335,6 @@ class FM(pl.LightningModule):
                 for i in range(3):
                     _,bins,_=ax[i].hist(real[~masks.squeeze(-1)].cpu().numpy().reshape(-1,3)[:,i],bins=30,alpha=0.5,label="real")
                     ax[i].hist(fake[~masks.squeeze(-1)].cpu().numpy().reshape(-1,3)[:,i],bins=bins,alpha=0.5,label="fake")
-                # ax[-1].hist(mass(real).cpu().numpy().reshape(-1),bins=30,alpha=0.5,label="real")
-                # ax[-1].hist(mass(fake).cpu().numpy().reshape(-1),bins=30,alpha=0.5,label="fake")
-                # ax[-1].legend()
-                # self.logger.log_image("inclusive_debug", [fig],self.global_step)
                 plt.close()
                 traceback.print_exc()
 

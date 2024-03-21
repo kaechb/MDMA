@@ -133,7 +133,10 @@ FONTSIZE=20
 def make_plots(model_name, disco=False):
     import os
     ckptdir = "./ckpts/"
-    ckpt = "{}.ckpt".format(model_name)
+    if model_name.find("fm")>-1:
+        ckpt = "{}_small.ckpt".format(model_name)
+    else:
+        ckpt = "{}.ckpt".format(model_name)
     # ckpt = "t_{}.ckpt".format(model_name)
     ckpt = ckptdir + ckpt
     # Load state dictionary from checkpoint
@@ -192,6 +195,7 @@ def make_plots(model_name, disco=False):
                 devices=1,
                 precision=32,
                 accelerator="gpu",
+                logger=False,
                 # limit_test_batches=40,
                 enable_progress_bar=False,
                 default_root_dir="/gpfs/dust/maxwell/user/{}/{}".format(
@@ -217,10 +221,10 @@ def make_plots(model_name, disco=False):
         params=sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("params",params,"time",total)
     plotter = plotting_thesis(big=True)
-    plotter.plot_ratio_calo(model.hists_real, model.hists_fake, weighted=False, leg=2, model_name=model_name+"_raw")
+    plotter.plot_ratio_calo(model.hists_real, model.hists_fake, weighted=False, leg=2, model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm")==-1 else "MDMA-FLOW")
     plt.show()
-    plotter.plot_ratio_calo(model.weighted_hists_real, model.weighted_hists_fake, weighted=True, leg=2, model_name=model_name+"_raw")
-    plotter.plot_response(model.response_real,model.response_fake,model_name=model_name+"_raw")
+    plotter.plot_ratio_calo(model.weighted_hists_real, model.weighted_hists_fake, weighted=True, leg=2, model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm")==-1 else "MDMA-FLOW")
+    plotter.plot_response(model.response_real,model.response_fake,model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm")==-1 else "MDMA-FLOW")
     print("saved plots",model_name)
     if model.hparams.dataset=="calo":
         torch.save(model.fake,"/beegfs/desy/user/kaechben/data_generated/calochallenge_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
@@ -253,21 +257,21 @@ def create_mask(n, size=30):
 
 torch.set_float32_matmul_precision("medium")
 import json
-
-with open('params.json', 'r') as json_file:
-    param_dict = json.load(json_file)
-with open('times.json', 'r') as json_file:
-    time_dict = json.load(json_file)
-if True:
-    # time_dict={}
-    # param_dict={}
-    for i,model_name in enumerate(["mdma_fm_calo_big","mdma_calo_big",]):#
-        model,total,params=make_plots(model_name)
-        time_dict[model_name]=total
-        param_dict[model_name]=params
-with open('params_calo.json', 'w') as json_file:
+if os.path.exists('params_calo_big.json'):
+    with open('params_calo_big.json', 'r') as json_file:
+        param_dict = json.load(json_file)
+    with open('times_calo_big.json', 'r') as json_file:
+        time_dict = json.load(json_file)
+else:
+    time_dict={}
+    param_dict={}
+for i,model_name in enumerate(["mdma_fm_calo_big","mdma_calo_big",]):#
+    model,total,params=make_plots(model_name)
+    time_dict[model_name]=total
+    param_dict[model_name]=params
+with open('params_calo_big.json', 'w') as json_file:
     json.dump(param_dict, json_file)
-with open('times_calo.json', 'w') as json_file:
+with open('times_calo_big.json', 'w') as json_file:
     json.dump(time_dict, json_file)
 
 

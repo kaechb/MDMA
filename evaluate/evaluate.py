@@ -168,7 +168,7 @@ def print_table(results):
         tex+="\n"
     print(tex)
 
-def plot(name,fake,true):
+def plot(name,fake,true,boxcox):
     true=true[:,:,:3]
     m_f,m_t=mass(fake),mass(true)
     mins=torch.quantile(true.reshape(-1,3),0.0,dim=0)
@@ -190,11 +190,12 @@ def plot(name,fake,true):
         hists["hists_fake"][var].fill(fake.reshape(-1,3)[(fake.reshape(-1,3)!=0).all(1)][:,var].cpu().numpy())
     hists["hists_real"][3].fill(m_t.cpu().numpy())
     hists["hists_fake"][3].fill(m_f.cpu().numpy())
-
+    replace_dict={"MPGAN":"MPGAN","t_tf":"TGAN","t_pf":"PF","t_ipf":"IPF","t_apf":"APF","t_nf":"NF","t_ccnf":"NF(cc)","t_cnf":"NF(c)","t_tnf":"TNF","IN":"IN","t_tf_slow":"TGAN2"}
     plot=plotting_thesis()
     try:
-        plot.plot_ratio(hists["hists_real"],hists["hists_fake"],weighted=False,leg=2,model_name=name)
-        plot.plot_corr(true,fake,name,leg=-1)
+        save_name=name if not boxcox else "boxcox/"+name
+        plot.plot_ratio(hists["hists_real"],hists["hists_fake"],weighted=False,leg=2,model_name=save_name,legend_name=replace_dict[name])
+        plot.plot_corr(true,fake,save_name,leg=-1)
     except:
         traceback.print_exc()
         print(name)
@@ -202,7 +203,7 @@ def plot(name,fake,true):
 def count_trainable_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-def jetnet_eval(model_dict,data_module,time_dict,param_dict,debug=False):
+def jetnet_eval(model_dict,data_module,time_dict,param_dict,boxcox,debug=False):
 
     results=pd.DataFrame()
     true=data_module.real_test
@@ -213,7 +214,7 @@ def jetnet_eval(model_dict,data_module,time_dict,param_dict,debug=False):
         if debug:
             results_temp={"name": ["t"], "model": [name], "w1m": [0], "w1p": [0],  "w1efp": [0], "kpd": [0], "fpd": [0],"time":[0],"parameters":[num_param]}
         else:
-            plot(name,temp,true)
+            plot(name,temp,true,boxcox)
             w1m_ = w1m(temp[:, :, :3], true[:, :, :3], num_eval_samples=len(true))
             kpd_real = get_fpd_kpd_jet_features(true, efp_jobs=20)
             kpd_fake = get_fpd_kpd_jet_features(temp[: len(true),:,:3], efp_jobs=20)
@@ -243,20 +244,25 @@ def jetnet_eval(model_dict,data_module,time_dict,param_dict,debug=False):
 
 
 
-from utils.dataloader_jetnet import PointCloudDataloader
+
 
 
 torch.set_float32_matmul_precision('medium' )
 
 
-boxcox=True
+boxcox=False
 model_dict={}
 time_dict={}
 param_dict={}
 name="jet"
 ckpt_dir="./ckpts/"
 ckpt_files = [f.split(".ckpt")[0] for f in os.listdir(ckpt_dir) if f.endswith('.ckpt')]
-jetnet30=["t_ipf","t_pf","t_apf","t_tf","t_tnf","t_nf","t_cnf","t_ccnf",]#,
+
+if not boxcox:
+    jetnet30=["t_ccnf_std","t_ipf_std","t_pf_std","t_apf_std","t_tf_std","t_tnf_std","t_nf_std","t_cnf_std",]#,
+else:
+    jetnet30=["t_ipf","t_pf","t_apf","t_tf","t_tnf","t_nf","t_cnf","t_ccnf",]#,
+
 for model_name in jetnet30:
     print(model_name)
     state_dict=torch.load(ckpt_dir+model_name+".ckpt")
@@ -273,18 +279,29 @@ for model_name in jetnet30:
         from fit.fit_tf import TF as model
 
 
-    model=model.load_from_checkpoint(ckpt_dir+model_name+".ckpt")
+    model=model.load_from_checkpoint(ckpt_dir+model_name+".ckpt",boxcox=boxcox)
+    model_name=model_name.replace("_std","")
+
     config["batch_size"]=1000
+
+    if boxcox:
+        from utils.dataloader_jetnet import PointCloudDataloader
+    else:
+        from utils.dataloader_jetnet_std import PointCloudDataloader
+
     data_module = PointCloudDataloader(**config)
     data_module.setup("fit")
     model.bins=[100,100,100]
     model.n_dim = 3
     if boxcox:
+
         model.pt_scaler=data_module.scaler[1]
         model.scaler=data_module.scaler[0]
+        print(model.pt_scaler)
+
     else:
         model.scaler=data_module.scaler
-
+        print(model.scaler)
 
     # calculate data bounds
     mins=torch.ones(config["n_dim"]).unsqueeze(0)
@@ -318,7 +335,7 @@ for model_name in jetnet30:
     n_kde,m_kde=fit_kde(n,m)
     n,m=sample_kde(len(data),n_kde,m_kde)
     # Trainer setup and model validation
-    trainer = pl.Trainer(devices=1, accelerator="gpu")
+    trainer = pl.Trainer(devices=1,logger=None,accelerator="gpu")
     model.eval_metrics=False
     model.batch=[]
     model.masks=[]
@@ -351,7 +368,7 @@ for model_name in jetnet30:
     time_dict[model_name]=np.mean(np.array(model.times))/len(model_dict[model_name])
     param_dict[model_name]=count_trainable_params(model)
 
-results=jetnet_eval(model_dict,data_module,time_dict,param_dict,debug=False)
+results=jetnet_eval(model_dict,data_module,time_dict,param_dict,debug=False,boxcox=boxcox)
 results.to_csv("results.csv")
 results=pd.read_csv("results.csv")
 print_table(results)

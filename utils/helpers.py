@@ -135,9 +135,10 @@ class plotting_thesis():
             handles[0] = mpatches.Patch(color=sns.color_palette()[0], label="The red data")
             ax.legend(handles, labels)
 
-    def plot_ratio_calo(self, h_real, h_fake, weighted=False, leg=-1, model_name="",):
+    def plot_ratio_calo(self, h_real, h_fake, weighted=False, leg=-1, model_name="",legend_name=""):
 
-
+        if legend_name=="":
+            legend_name="Generated"
 
             # Main plot
         FONTSIZE=20
@@ -174,8 +175,8 @@ class plotting_thesis():
                 ax_dict={"main_ax": ax_main, "ratio_ax": ax_ratio},
                 rp_ylabel="Ratio",
                 bar_="blue",
-                rp_num_label="Ground Truth",
-                rp_denom_label="Generated",
+                rp_num_label="GEANT4",
+                rp_denom_label=legend_name,
                 rp_uncert_draw_type="line"
             )
             ax_ratio.set_xlabel(name, fontsize=FONTSIZE)
@@ -204,7 +205,7 @@ class plotting_thesis():
             ax_main.tick_params(axis='x', which='both', length=0, labelbottom=False)
 
             ax_ratio.tick_params(axis='x', which='both', labelbottom=True)
-            if k==2:
+            if k==leg:
                 self._adjust_legend(ax_main, leg)
 
 
@@ -214,15 +215,17 @@ class plotting_thesis():
         plt.show()
         plt.close()
 
-    def plot_response(self,h_real,h_fake,model_name):
+    def plot_response(self,h_real,h_fake,model_name,legend_name=""):
+        if legend_name=="":
+            legend_name="Generated"
         fig,ax=plt.subplots(2,sharex=True,height_ratios=[4,1],figsize=self.fig_size1)
         h_real.plot_ratio(
                 h_fake,
                 ax_dict={"main_ax":ax[0],"ratio_ax":ax[1]},
                 rp_ylabel=r"Ratio",
                 bar_="blue",
-                rp_num_label="Ground Truth",
-                rp_denom_label="Generated",
+                rp_num_label="GEANT4",
+                rp_denom_label=legend_name,
                 rp_uncert_draw_type="line",  # line or bar
             )
         ax_main,ax_ratio=ax
@@ -258,12 +261,13 @@ class plotting_thesis():
         plt.savefig(f"plots/calo/response_{model_name}.pdf",format="pdf")
         plt.show()
 
-    def plot_ratio(self,h_real,h_fake,weighted,leg=-1,model_name="",n_part=30,log=False):
+    def plot_ratio(self,h_real,h_fake,weighted,leg=-1,model_name="",n_part=30,log=False,legend_name=""):
         i = 0
         k = 0
         FONTSIZE=20
         fig = plt.figure(figsize=self.fig_size2)
-
+        if legend_name=="":
+            legend_name="Generated"
 
 
             # Main plot
@@ -289,8 +293,8 @@ class plotting_thesis():
                 ax_dict={"main_ax": ax_main, "ratio_ax": ax_ratio},
                 rp_ylabel="Ratio",
                 bar_="blue",
-                rp_num_label="Ground Truth",
-                rp_denom_label="Generated",
+                rp_num_label="PYTHIA",
+                rp_denom_label=legend_name,
                 rp_uncert_draw_type="line"
             )
             ax_ratio.set_xlabel(name, fontsize=FONTSIZE)
@@ -374,8 +378,15 @@ class plotting_thesis():
                              )
             axes[2].set_title(r'$p_T^{\text{rel}}$',fontsize=self.FONTSIZE+10, pad=10)
             for ax in axes:
-                ax.set_xticks([])
-                ax.set_yticks([])
+                ax.set_xticks([1,10,20,30],)
+                ax.set_yticks([1,10,20,30])
+                ax.xaxis.set_label_position('top')
+                ax.xaxis.tick_top()
+
+
+                ax.set_yticklabels([1,10,20,30])
+                ax.set_xticklabels([1,10,20,30])
+
                 ax.set_xlabel("Particles",fontsize=self.FONTSIZE+5)
                 ax.set_ylabel("Particles",fontsize=self.FONTSIZE+5)
             cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
@@ -384,30 +395,30 @@ class plotting_thesis():
             if name=="Ground Truth":
                 plt.savefig("plots/jetnet30/corrGroundTruth.pdf",format="pdf")
             else:
-                plt.savefig("plots/jetnet30/corr"+model+".pdf",format="pdf")
+                plt.savefig("plots/jetnet30/"+model+"corr.pdf",format="pdf")
             plt.show()
-        diff=[diffs[0]-diffs[3],diffs[1]-diffs[4],diffs[2]-diffs[5]]
+        # diff=[diffs[0]-diffs[3],diffs[1]-diffs[4],diffs[2]-diffs[5]]
 
-        fig, axes = plt.subplots(1, 3, figsize=self.fig_size3)
-        fig.suptitle(r"$\Delta$Ground Truth - Generated Data Correlations between Particles", fontsize=28, fontweight="bold")
-        sns.heatmap(diff[0], ax=axes[0], cmap='coolwarm', cbar=False,vmin=-.1,vmax=.1)
-        axes[0].set_title(r'$\eta^{rel}$')
+        # fig, axes = plt.subplots(1, 3, figsize=self.fig_size3)
+        # fig.suptitle(r"$\Delta$Ground Truth - Generated Data Correlations between Particles", fontsize=28, fontweight="bold")
+        # sns.heatmap(diff[0], ax=axes[0], cmap='coolwarm', cbar=False,vmin=-.1,vmax=.1)
+        # axes[0].set_title(r'$\eta^{rel}$')
 
-        sns.heatmap(diff[1], ax=axes[1], cmap='coolwarm', cbar=False,vmin=-.1,vmax=.1)
-        axes[1].set_title(r'$\phi^{rel}$')
+        # sns.heatmap(diff[1], ax=axes[1], cmap='coolwarm', cbar=False,vmin=-.1,vmax=.1)
+        # axes[1].set_title(r'$\phi^{rel}$')
 
-        cax3=sns.heatmap(diff[2], ax=axes[2], cmap='coolwarm',cbar=False,vmin=-.1,vmax=.1)
-        axes[2].set_title(r'$p_T^{rel}$')
-        for ax in axes:
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.set_xlabel("Particles")
-            ax.set_ylabel("Particles")
-        cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
-        fig.colorbar(cax3.collections[0], cax=cbar_ax)
-        plt.tight_layout(rect=[0, 0, 0.9, 1])
-        plt.savefig("plots/jetnet30/diff_"+model+name+".pdf",format="pdf")
-        plt.show()
+        # cax3=sns.heatmap(diff[2], ax=axes[2], cmap='coolwarm',cbar=False,vmin=-.1,vmax=.1)
+        # axes[2].set_title(r'$p_T^{rel}$')
+        # for ax in axes:
+        #     ax.set_xticks([])
+        #     ax.set_yticks([])
+        #     ax.set_xlabel("Particles")
+        #     ax.set_ylabel("Particles")
+        # cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+        # fig.colorbar(cax3.collections[0], cax=cbar_ax)
+        # plt.tight_layout(rect=[0, 0, 0.9, 1])
+        # plt.savefig("plots/jetnet30/diff_"+model+name+".pdf",format="pdf")
+        # plt.show()
 
 
 def mass(p, canonical=False):
@@ -585,7 +596,9 @@ class plotting_point_cloud():
         else:
             self.summary = None
 
-    def plot_calo(self,h_real,h_fake,weighted,leg=-1):
+    def plot_calo(self,h_real,h_fake,weighted,leg=-1,legend_name=""):
+        if legend_name=="":
+            legend_name="Generated"
         #This creates a histogram of the inclusive distributions and calculates the mass of each jet
         #and creates a histogram of that
         #if save, the histograms are logged to tensorboard otherwise they are shown
@@ -606,8 +619,8 @@ class plotting_point_cloud():
                 ax_dict={"main_ax":ax[0,k],"ratio_ax":ax[1,k]},
                 rp_ylabel=r"Ratio",
                 bar_="blue",
-                rp_num_label="Generated",
-                rp_denom_label="Ground Truth",
+                rp_num_label=legend_name,
+                rp_denom_label="GEANT4",
                 rp_uncert_draw_type="line",  # line or bar
             )
             ax[0,k].set_xlabel("")

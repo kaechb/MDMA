@@ -126,7 +126,9 @@ class MDMA(pl.LightningModule):
                 fake = self.scaler.inverse_transform(fake)
             if self.hparams.dataset=="calo":
                 fake[...,1:]=fake[...,1:].floor()
-                fake[:,:,2]=(fake[:,:,2]+torch.randint(0,self.hparams.bins[2], size=(fake.shape[0],1),device=fake.device).expand(-1,mask.shape[1]))%self.hparams.bins[2]
+
+                if not self.hparams.raw:
+                    fake[:,:,2]=(fake[:,:,2]+torch.randint(0,self.hparams.bins[2], size=(fake.shape[0],1),device=fake.device).expand(-1,mask.shape[1]))%self.hparams.bins[2]
             fake[mask] = 0  # set the masked values to zero
             return fake,None
         else:

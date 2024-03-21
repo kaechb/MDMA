@@ -7,8 +7,8 @@ bins:
   - 100
   - 100
   - 100
-boxcox: true
-ckpt: "ckpts/t_cnf.ckpt"
+boxcox: false
+ckpt: "ckpts/t_cnf_std.ckpt"
 cond_dim: 1
 context_features: 1
 coupling_hidden: 128

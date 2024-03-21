@@ -127,11 +127,15 @@ class PNF(pl.LightningModule):
         if scale:
 
             fake=fake.reshape(-1,self.hparams.n_part,self.hparams.n_dim)
-            std_fake=fake[:,:,:2]
-            pt_fake=fake[:,:,-1:]
-            std_fake= self.scaler.inverse_transform(std_fake)
-            pt_fake= self.pt_scaler.inverse_transform(pt_fake)
-            fake=torch.cat([std_fake,pt_fake],dim=2)
+            if self.hparams.boxcox:
+                std_fake=fake[:,:,:2]
+                pt_fake=fake[:,:,-1:]
+                std_fake= self.scaler.inverse_transform(std_fake)
+                pt_fake= self.pt_scaler.inverse_transform(pt_fake)
+
+                fake=torch.cat([std_fake,pt_fake],dim=2)
+            else:
+                fake=self.scaler.inverse_transform(fake)
             fake[mask]=0
 
 
@@ -322,12 +326,15 @@ class PNF(pl.LightningModule):
                 batch, mask, cond = batch[0], batch[1], batch[2]
 
                 scaled_batch=batch.clone()
-
-                std_batch=scaled_batch[:,:,:2]
-                pt_batch=scaled_batch[:,:,-1:]
-                std_batch[~mask]= self.scaler.transform(std_batch[~mask])
-                pt_batch[~mask]= self.pt_scaler.transform(pt_batch[~mask])
-                scaled_batch=torch.cat([std_batch,pt_batch],dim=2)
+                if self.hparams.boxcox:
+                    std_batch=scaled_batch[:,:,:2]
+                    pt_batch=scaled_batch[:,:,-1:]
+                    std_batch[~mask]= self.scaler.transform(std_batch[~mask])
+                    pt_batch[~mask]= self.pt_scaler.transform(pt_batch[~mask])
+                    scaled_batch=torch.cat([std_batch,pt_batch],dim=2)
+                    
+                else:
+                    scaled_batch=self.scaler.transform(scaled_batch)
                 scaled_batch[mask]=torch.randn_like(scaled_batch[mask])*1e-4
                 batch[mask]=0
                 if self.hparams.context_features>=1:

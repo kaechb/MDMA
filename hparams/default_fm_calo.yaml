@@ -30,7 +30,7 @@ hidden_dim: 64
 lambda_gp:  0
 lambda_response: 0.
 latent: 16
-layers: 4
+layers: 16
 lr: 0.001
 max: true
 max_epochs: 2000

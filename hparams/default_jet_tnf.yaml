@@ -6,9 +6,9 @@ bins:
   - 100
   - 100
   - 100
-boxcox: true
+boxcox: false
 ckpt: ''
-ckpt_flow: ./ckpts/t_nf.ckpt
+ckpt_flow: ./ckpts/t_nf_std.ckpt
 cond_dim: 0
 context_features: 0
 coupling_hidden: 256

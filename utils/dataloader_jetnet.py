@@ -143,8 +143,8 @@ class PointCloudDataloader(pl.LightningDataModule):
         temp=data[:,:,-2].reshape(-1,1)
         temp[~(data[:,:,-1]).bool().reshape(-1)]=self.scaler[1].fit_transform(temp[~(data[:,:,-1]).bool().reshape(-1),:])
         data[:,:,-2:-1]=temp.reshape(-1,self.n_part,1)
-        self.std_mins=data[:,:-1].min(0)[0]
-        self.std_maxs=data[:,:-1].max(0)[0]
+        self.std_mins=temp.min(0)[0]
+        self.std_maxs=temp.max(0)[0]
 
         self.data = data.float()
         self.test_set =test_set.float()

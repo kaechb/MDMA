@@ -15,7 +15,7 @@ from fit.fit_jet_fm import FM
 import pytorch_lightning as pl
 import torch
 
-
+from callbacks.ema import EMA
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -126,7 +126,9 @@ def make_plots(model_name,data_module, disco=False):
                 model.mins=data_module.std_mins.to("cuda")
                 model.maxs=data_module.std_maxs.to("cuda")
         else:
-            model=FM.load_from_checkpoint(ckpt,boxcox=boxcox)
+
+
+            model=FM.load_from_checkpoint(ckpt,boxcox=boxcox,strict=False)
             model.mins=data_module.std_mins.to("cuda")
             model.maxs=data_module.std_maxs.to("cuda")
         model.w1m_best = 0.01
@@ -154,8 +156,9 @@ def make_plots(model_name,data_module, disco=False):
         trainer = pl.Trainer(
                 devices=1,
                 precision=32,
+                logger=None,
                 accelerator="gpu",
-
+                callbacks=[EMA(0.999) if boxcox else None],
                 enable_progress_bar=False,
                 default_root_dir="/gpfs/dust/maxwell/user/{}/{}".format(
                     os.environ["USER"], config["dataset"]
@@ -246,7 +249,9 @@ def calc_metrics(true,train,time_dict,param_dict,models):
 
         # Plotting
         plotter = plotting_thesis()
-        plotter.plot_ratio(hists["hists_real"], hists["hists_fake"], weighted=False, leg=2, model_name=model_name,n_part=150,log=True)
+        replace_dict={"mdma_jet":"MDMA-GAN","mdma_jet":"MDMA-GAN","mdma_fm_jet":"MDMA-Flow","IN":"IN","EPiC-GAN":"EPiC-GAN","EPiC-FM":"EPiC-FM"}
+        save_name=model_name
+        plotter.plot_ratio(hists["hists_real"], hists["hists_fake"], weighted=False, leg=2, model_name=save_name,n_part=150,log=True,legend_name=replace_dict[model_name.replace("_std","")])
         df=pd.DataFrame(metrics)
         print(metrics)
         if i==0:
@@ -377,13 +382,12 @@ def print_table(results):
         tex+="\n"
     print(tex)
 import json
-models=["mdma_jet","mdma_fm_jet","EPiC-FM","IN","EPiC-GAN"]#,"mdma_fm_jet","EPiC-FM","IN","EPiC-GAN"
+#,"mdma_fm_jet","EPiC-FM","IN","EPiC-GAN"
 boxcox=True
-for i in models:
-
-    if i.find("_std")>-1:
-        boxcox=False
-        break
+if not boxcox:
+    models=["mdma_jet_std","mdma_fm_jet_std","EPiC-FM","IN","EPiC-GAN"]
+else:
+    models=["mdma_jet","mdma_fm_jet","EPiC-FM","IN","EPiC-GAN"]
 print("boxcox:",boxcox)
 if boxcox:
     from utils.dataloader_jetnet import PointCloudDataloader

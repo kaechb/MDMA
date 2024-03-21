@@ -8,7 +8,7 @@ bins:
   - 100
 boxcox: false
 cond_dim: 1
-ckpt: "ckpts/mdma_fm_jet.ckpt"
+ckpt: ""
 dataset: jet
 decay: 0.999
 dropout: 0
@@ -20,9 +20,9 @@ glu: false
 hidden_dim: 256
 latent: 128
 layers: 6
-lr: 0.000001
+lr: 0.001
 max: true
-max_epochs: 200
+max_epochs: 2000
 model: FM
 n_dim: 3
 n_part: 150
