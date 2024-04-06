@@ -29,7 +29,7 @@ l_dim: 16
 lr: 0.0001
 mass_loss: false
 max: true
-max_epochs: 2000
+max_epochs: 1000
 mean_field_loss: true
 model: TNF
 n_dim: 3

@@ -158,7 +158,7 @@ def make_plots(model_name,data_module, disco=False):
                 precision=32,
                 logger=None,
                 accelerator="gpu",
-                callbacks=[EMA(0.999) if boxcox else None],
+                callbacks=[EMA(0.999)] if boxcox else None,
                 enable_progress_bar=False,
                 default_root_dir="/gpfs/dust/maxwell/user/{}/{}".format(
                     os.environ["USER"], config["dataset"]
@@ -205,6 +205,7 @@ def make_plots(model_name,data_module, disco=False):
     return model,total,params
 
 def calc_metrics(true,train,time_dict,param_dict,models):
+    groups={"150":[]}
 
     for i,model_name in enumerate(models):#mdma_jet
         if model_name=="IN":
@@ -251,7 +252,14 @@ def calc_metrics(true,train,time_dict,param_dict,models):
         plotter = plotting_thesis()
         replace_dict={"mdma_jet":"MDMA-GAN","mdma_jet":"MDMA-GAN","mdma_fm_jet":"MDMA-Flow","IN":"IN","EPiC-GAN":"EPiC-GAN","EPiC-FM":"EPiC-FM"}
         save_name=model_name
-        plotter.plot_ratio(hists["hists_real"], hists["hists_fake"], weighted=False, leg=2, model_name=save_name,n_part=150,log=True,legend_name=replace_dict[model_name.replace("_std","")])
+
+        if save_name.find("mdma")>-1:
+            save_name=model_name
+
+
+
+            groups["150"].append(plotter.plot_ratio_multiple(hists["hists_real"],hists["hists_fake"],weighted=False,leg=2,model_name=save_name,legend_name=replace_dict[model_name.replace("_std","")],group_name="150",groups=groups,n_part=150,boxcox=boxcox))
+
         df=pd.DataFrame(metrics)
         print(metrics)
         if i==0:
@@ -393,6 +401,8 @@ if boxcox:
     from utils.dataloader_jetnet import PointCloudDataloader
 else:
     from utils.dataloader_jetnet_std import PointCloudDataloader
+data_dir="/beegfs/desy/user/kaechben/thesis/jetnet150/data_generated/"
+os.makedirs(data_dir,exist_ok=True)
 data_module = PointCloudDataloader(batch_size=5000,n_part=150,n_dim=3,sampler=False,parton="t")
 data_module.setup("fit")
 torch.set_float32_matmul_precision("medium")
@@ -400,6 +410,7 @@ time_dict={}
 param_dict={}
 true=data_module.real_test[...,:-1]
 train=torch.from_numpy(data_module.train[...,:-1])[:50000]
+
 with open('params.json', 'r') as json_file:
     param_dict = json.load(json_file)
 with open('times.json', 'r') as json_file:

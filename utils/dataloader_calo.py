@@ -154,14 +154,14 @@ class PointCloudDataloader(pl.LightningDataModule):
         self.train_iterator = BatchIterator(
                             self.data,
                             batch_size = self.batch_size,
-                            max_tokens_per_batch=500000,
+                            max_tokens_per_batch=200_000,
                             drop_last=True,
                             shuffle=True
                             )
         self.val_iterator = BatchIterator(
                             self.val_data,
                             batch_size = self.batch_size,
-                            max_tokens_per_batch=500000,
+                            max_tokens_per_batch=500_000,
                             drop_last=False,
                             shuffle=True
                             )

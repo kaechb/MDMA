@@ -130,7 +130,7 @@ from utils.dataloader_calo import PointCloudDataloader
 
 FONTSIZE=20
 
-def make_plots(model_name,data_module, disco=False,raw=False):
+def make_plots(model_name,data_module, disco=False,raw=False,groups={}):
     import os
     ckptdir = "./ckpts/"
 
@@ -160,7 +160,7 @@ def make_plots(model_name,data_module, disco=False,raw=False):
 
 
     config["max"]=False
-    model = MDMA.load_from_checkpoint(ckpt,raw=raw) if config["model"]!="FM" else FM.load_from_checkpoint(ckpt)
+    model = MDMA.load_from_checkpoint(ckpt,raw=raw) if config["model"]!="FM" else FM.load_from_checkpoint(ckpt,raw=raw)
     model.eval_metrics=False
 
 # Assuming `model` is defined elsewhere in your code
@@ -189,6 +189,7 @@ def make_plots(model_name,data_module, disco=False,raw=False):
     model.scaled_mins=mins.cuda()
     model.scaled_maxs=maxs.cuda()
     model.load_datamodule(data_module)
+    model.hparams.raw=raw
     hists=get_hists(config["bins"],mins*1.1,maxs*1.1,calo=True,min_response=min_response,max_response=max_response)
     model.times=[]
     trainer = pl.Trainer(
@@ -221,10 +222,14 @@ def make_plots(model_name,data_module, disco=False,raw=False):
     plotter = plotting_thesis()
     if raw:
         model_name+="_raw"
-    plotter.plot_ratio_calo(model.hists_real, model.hists_fake, weighted=False, leg=2-int(raw), model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow")
-    plt.show()
-    plotter.plot_ratio_calo(model.weighted_hists_real, model.weighted_hists_fake, weighted=True, leg=2-int(raw), model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow")
-    plotter.plot_response(model.response_real,model.response_fake,model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow")
+    groups["unweighted"].append(plotter.plot_calo_multiple(model.hists_real, model.hists_fake, weighted=False, leg=2-int(raw), model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow",groups=groups,group_name="unweighted",raw=raw))
+
+    groups["weighted"].append(plotter.plot_calo_multiple(model.weighted_hists_real, model.weighted_hists_fake, weighted=True, leg=2-int(raw), model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow",groups=groups,group_name="weighted",raw=raw))
+    print(1,groups["responses"])
+    fig=plotter.plot_response_multiple(model.response_real,model.response_fake,model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow",groups=groups,group_name="responses",raw=raw)
+    print(fig)
+    groups["responses"].append(fig)
+    print(2,groups["responses"])
     print("saved plots",model_name)
     if model.hparams.dataset=="calo":
         torch.save(model.fake,"/beegfs/desy/user/kaechben/data_generated/calochallenge_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
@@ -235,7 +240,7 @@ def make_plots(model_name,data_module, disco=False,raw=False):
         #plotter.plot_corr(true.numpy(), fake.numpy(), model_name, disco=disco,leg=-1)
         # true = torch.cat([torch.nn.functional.pad(batch, (0, 0, 0, model.hparams.n_part - batch.size(1))) for batch in model.batch],dim=0) if model.hparams.max else torch.cat(model.batch)
 
-    return model,total,params
+    return model,total,params,groups
 
 
 def create_mask(n, size=30):
@@ -256,7 +261,8 @@ def create_mask(n, size=30):
 torch.set_float32_matmul_precision("medium")
 import json
 import yaml
-raw=False
+raw=True
+groups={"weighted":[],"unweighted":[],"responses":[]}
 config = config = yaml.load(
         open("hparams/default_calo.yaml"), Loader=yaml.FullLoader
     )
@@ -269,8 +275,8 @@ with open('times_calo.json', 'r') as json_file:
 if True:
     time_dict={}
     param_dict={}
-    for i,model_name in enumerate(["mdma_calo",]):#"mdma_fm_calo",
-        model,total,params=make_plots(model_name,data_module,raw=raw)
+    for i,model_name in enumerate(["mdma_calo","mdma_fm_calo"]):#"mdma_fm_calo",
+        model,total,params,groups=make_plots(model_name,data_module,raw=raw, groups=groups)
         time_dict[model_name]=total
         param_dict[model_name]=params
 with open('params_calo.json', 'w') as json_file:

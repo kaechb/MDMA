@@ -115,7 +115,7 @@ class plotting_thesis():
         self.fig_size2=[2*6.4, 2*6.4]
         self.fig_size3=[3*6.4, 6.4]
         self.fig_size4=[4*6.4, 6.4]
-        self.alpha=0.3
+        self.alpha=.3
         mpl.rcParams['lines.linewidth'] = 2
         font = { "size": 18}#"family": "normal",
         mpl.rc("font", **font)
@@ -130,9 +130,9 @@ class plotting_thesis():
     def _adjust_legend(self, ax, leg):
         # Adjust the legend on the plot
         if leg >= 0:
-            ax.legend(loc="best", fontsize=self.FONTSIZE)
+            ax.legend(loc="best", fontsize=self.FONTSIZE-5)
             handles, labels = ax.get_legend_handles_labels()
-            handles[0] = mpatches.Patch(color=sns.color_palette()[0], label="The red data")
+            handles[0] = mpatches.Patch(color=sns.color_palette()[0], label="The red data", alpha=0.3)
             ax.legend(handles, labels)
 
     def plot_ratio_calo(self, h_real, h_fake, weighted=False, leg=-1, model_name="",legend_name=""):
@@ -236,7 +236,7 @@ class plotting_thesis():
 
         ax_main.legend()
         ax_ratio.set_ylim(0.5, 1.5)
-        ax_main.set_xlabel("")
+
 
 
         ax_main.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
@@ -257,11 +257,230 @@ class plotting_thesis():
         ax_main.tick_params(axis='x', which='both', length=0, labelbottom=False)
 
         ax_ratio.tick_params(axis='x', which='both', labelbottom=True)
-        plt.tight_layout(pad=0.3)
-        plt.savefig(f"plots/calo/response_{model_name}.pdf",format="pdf")
-        plt.show()
+        fig.tight_layout(pad=0.3)
+        fig.savefig(f"plots/calo/response_{model_name}.pdf",format="pdf")
+        fig.show()
 
-    def plot_ratio(self,h_real,h_fake,weighted,leg=-1,model_name="",n_part=30,log=False,legend_name=""):
+    def plot_calo_multiple(self, h_real, h_fake, weighted=False, leg=-1, model_name="",legend_name="",group_name="",groups={},raw=False):
+        if legend_name=="":
+            legend_name="Generated"
+
+            # Main plot
+        FONTSIZE=20
+        # Plot variables and their names
+        variables = [r"E",r"z",r"alpha",r"R"]
+        names = [r"$E$",r"$z$",r"$\alpha$",r"$R$"]
+        ticks=[[0,2000,4000,6000],[0,10,20,30,40],[0,5,10,15],[0,2,4,6,8]] if not self.big else [[0,2000,4000,6000],[0,10,20,30,40],[0,10,20,30,40],[0,4,8,12,16]]
+        if weighted:
+            variables=variables[1:]
+            names=names[1:]
+            ticks=ticks[1:]
+        if groups[group_name] ==[] :
+
+            if weighted:
+
+                fig = plt.figure(figsize=self.fig_size3)
+                FONTSIZE=FONTSIZE+3
+                outer_gs = gridspec.GridSpec(1,3, figure=fig,hspace=0.3,wspace=.3)
+
+            else:
+                fig = plt.figure(figsize=self.fig_size2)
+
+                outer_gs = gridspec.GridSpec(2, 2, figure=fig, hspace=0.3, wspace=.3)
+        else:
+            # Assuming fig and outer_gs are provided for adding plots to existing axes
+            fig=groups[group_name][0]
+            print(fig.axes)
+            pass
+
+        current_cycler = plt.rcParams['axes.prop_cycle']
+
+        # Convert to a list and access the second color
+        colors = list(current_cycler)
+        # Iterate through the provided variables and plot
+        for idx, (variable, name) in enumerate(zip(variables, names)):
+            if len(groups[group_name])>0:  # Check if this is a subsequent call
+
+                print(group_name,fig.axes)
+                if weighted and idx==3:
+                    break
+                ax_main = fig.axes[idx * 2]
+                ax_ratio = fig.axes[idx * 2 + 1]
+
+
+            else:
+                inner_gs = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=outer_gs[idx], height_ratios=[4, 1], hspace=0.15)
+                ax_main = fig.add_subplot(inner_gs[0])
+                ax_ratio = fig.add_subplot(inner_gs[1], sharex=ax_main)
+
+            # Example plot commands, replace with your actual data and plotting
+            if len(groups[group_name])==0:  # Check if this is a subsequent call
+
+                hep.histplot(h_real[idx], ax=ax_main, label="GEANT4", histtype='fill', alpha=self.alpha)
+            hep.histplot(h_fake[idx], ax=ax_main, label=legend_name, histtype='step')
+
+            # Calculating ratio: Assume h_real and h_fake have compatible binning and can be directly divided
+            ratio = h_fake[idx].values()/ h_real[idx].values()
+            bins = h_real[idx].axes[0].edges  # Assuming 1D histograms and compatible binning
+
+            # Plotting the ratio as a bar plot
+            # Calculate bin centers and width for the bar plot
+
+            for i in range(len(bins)-1):
+                bin_start = bins[i]
+                bin_end = bins[i+1]
+                ratio_value = ratio[i]
+                # Draw a horizontal line for each bin
+                ax_ratio.hlines(ratio_value, bin_start, bin_end, lw=2,color=colors[1+len(groups[group_name])]['color'])
+                if i < len(bins) - 2:  # Check to avoid index out of bounds
+                    next_ratio_value = ratio[i+1]
+            # Vertical line connecting to the next bin
+                    ax_ratio.vlines(bin_end, ratio_value, next_ratio_value, lw=2,color=colors[1+len(groups[group_name])]['color'])
+            #ax_ratio.bar(bin_centers, ratio, width=bin_widths, align='center', fill=False,linestyle=linestyles[self.counter],label=legend_name)
+
+            # Setting labels and styles
+            ax_ratio.set_xlabel(name, fontsize=FONTSIZE)
+            ax_main.set_ylabel("Counts", fontsize=FONTSIZE)
+            ax_ratio.set_ylabel("Ratio", fontsize=FONTSIZE)
+
+            ax_ratio.set_ylim(0.5, 1.5) if variable=="E" else ax_ratio.set_ylim(0.9, 1.1)
+            ax_main.set_xlabel("")
+
+            ax_main.patches[0].set_fill(True)
+            if groups[group_name]==[]:
+                ax_main.tick_params(axis='x', which='both', length=0, labelbottom=False)
+
+                ax_main.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
+                ax_ratio.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
+                ax_main.tick_params(axis='x', which='both', length=0, labelbottom=False)
+
+                ax_ratio.tick_params(axis='x', which='both', labelbottom=True)
+            ax_main.set_xticks([])
+            ax_ratio.set_xticks(ticks[idx],labels=ticks[idx])
+
+            ax_main.patches[0].set_edgecolor("black")
+            ax_main.patches[1].set_linewidth(2)
+            ax_main.patches[0].set_alpha(self.alpha)
+            ax_main.patches[0].set_lw(2)
+            if idx==0 and not weighted:
+                ax_main.set_yscale("log")
+            # ax_ratio.set_xlim(ax_main.get_xlim())
+
+            if idx==leg:
+                self._adjust_legend(ax_main, leg)
+
+
+        fig.tight_layout()
+        weighted="_weighted" if weighted else ""
+        if self.big:
+            weighted+="_big"
+        weighted+="_raw" if raw else ""
+
+        path="plots/calo/"
+
+
+        os.makedirs(path, exist_ok=True)
+
+        fig.savefig(path+f"calo{weighted}.pdf", format="pdf")
+
+
+
+
+        return fig
+
+    def plot_response_multiple(self, h_real, h_fake, weighted=False, leg=-1, model_name="",legend_name="",group_name="",groups={},raw=False):
+        if legend_name=="":
+            legend_name="Generated"
+
+            # Main plot
+        print(groups,group_name)
+        current_cycler = plt.rcParams['axes.prop_cycle']
+
+        # Convert to a list and access the second color
+        colors = list(current_cycler)
+
+        # Plot variables and their names
+
+
+        # Create or reuse figure and gridspec
+        if groups[group_name] ==[] :
+            print("Creating new figure")
+
+            fig,ax=plt.subplots(nrows=2,sharex=True,height_ratios=[4,1],figsize=self.fig_size1)
+            ax_main = ax[0]
+            ax_ratio = ax[1]
+
+        else:
+            # Assuming fig and outer_gs are provided for adding plots to existing axes
+            fig=groups[group_name][0]
+            ax_main = fig.axes[0]
+            ax_ratio = fig.axes[ 1]
+
+        # Iterate through the provided variables and plot
+# Check if this is a subsequent call
+
+
+
+        # Example plot commands, replace with your actual data and plotting
+        if len(groups[group_name])==0:  # Check if this is a subsequent call
+
+            hep.histplot(h_real, ax=ax_main, label="GEANT4", histtype='fill', alpha=self.alpha)
+        hep.histplot(h_fake, ax=ax_main, label=legend_name, histtype='step')
+
+        # Calculating ratio: Assume h_real and h_fake have compatible binning and can be directly divided
+        ratio = h_fake.values()/ h_real.values()
+        bins = h_real.axes[0].edges  # Assuming 1D histograms and compatible binning
+
+        # Plotting the ratio as a bar plot
+        # Calculate bin centers and width for the bar plot
+        for i in range(len(bins)-1):
+            bin_start = bins[i]
+            bin_end = bins[i+1]
+            ratio_value = ratio[i]
+            # Draw a horizontal line for each bin
+            ax_ratio.hlines(ratio_value, bin_start, bin_end, lw=2,color=colors[1+len(groups[group_name])]['color'])
+            if i < len(bins) - 2:  # Check to avoid index out of bounds
+                next_ratio_value = ratio[i+1]
+        # Vertical line connecting to the next bin
+                ax_ratio.vlines(bin_end, ratio_value, next_ratio_value, lw=2,color=colors[1+len(groups[group_name])]['color'])
+        #ax_ratio.bar(bin_centers, ratio, width=bin_widths, align='center', fill=False,linestyle=linestyles[self.counter],label=legend_name)
+
+            # Setting labels and styles
+
+        ax_main.set_xlabel("")
+        ax_main.set_ylabel("Counts",fontsize=self.FONTSIZE)
+        ax_ratio.set_xlabel("Response",fontsize=self.FONTSIZE)
+        ax_main.set_ylabel("Ratio",fontsize=self.FONTSIZE)
+        ax_main.set_yscale("log")
+        ax_main.legend()
+        ax_ratio.set_ylim(0.5, 1.5)
+
+
+
+
+        ax_main.patches[0].set_fill(True)
+        ax_main.patches[0].set_alpha(self.alpha)
+
+        ax_main.patches[0].set_edgecolor("black")
+        ax_main.patches[1].set_linewidth(2)
+        ax_main.patches[0].set_lw(2)
+        if groups[group_name]==[]:
+                ax_main.tick_params(axis='x', which='both', length=0, labelbottom=False)
+
+                #ax_main.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
+                #ax_ratio.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
+
+        fig.tight_layout(pad=0.3)
+        path="plots/calo/"
+        path+="raw_" if raw else ""
+        os.makedirs(path, exist_ok=True)
+        if not self.big:
+            fig.savefig(path+f"response.pdf", format="pdf")
+        else:
+            fig.savefig(path+f"response_big.pdf", format="pdf")
+        return fig
+
+    def plot_ratio(self,h_real,h_fake,weighted,leg=-1,model_name="",n_part=30,log=False,legend_name="",outer_gs=None,fig=None):
         i = 0
         k = 0
         FONTSIZE=20
@@ -276,7 +495,8 @@ class plotting_thesis():
         variables = ["eta", "phi", "pt", "m"]
         names = [r"$\eta^{\mathrm{rel}}$", r"$\phi^{\mathrm{rel}}$", r"$p_T^{\mathrm{rel}}$", r"$m^{\mathrm{rel}}$"]
 
-        outer_gs = gridspec.GridSpec(2, 2, figure=fig,hspace=0.3,wspace=.3)
+        if outer_gs==None:
+            outer_gs = gridspec.GridSpec(2, 2, figure=fig,hspace=0.3,wspace=.3)
 
         for k, (variable, name) in enumerate(zip(variables, names)):
             inner_gs = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=outer_gs[k],
@@ -329,8 +549,96 @@ class plotting_thesis():
         os.makedirs("plots/jetnet{}".format(n_part),exist_ok=True)
         # if not save==None:
         plt.savefig("plots/jetnet{}/{}_jetnet.pdf".format(n_part,model_name),format="pdf")
+
         plt.show()
         plt.close()
+
+    def plot_ratio_multiple(self, h_real, h_fake, weighted, leg=-1, model_name="", n_part=30, log=False, legend_name="",group_name="",groups={},boxcox=False):
+        FONTSIZE = 20
+        linestyles=[":","--","-."]
+        edgecolors=["black","darkgrey","grey"]
+        current_cycler = plt.rcParams['axes.prop_cycle']
+
+        # Convert to a list and access the second color
+        colors = list(current_cycler)
+        second_color = colors[1]['color']
+        if legend_name == "":
+            legend_name = "Generated"
+
+        # Plot variables and their names
+        variables = ["eta", "phi", "pt", "m"]
+        names = [r"$\eta^{\mathrm{rel}}$", r"$\phi^{\mathrm{rel}}$", r"$p_T^{\mathrm{rel}}$", r"$m^{\mathrm{rel}}$"]
+
+        # Create or reuse figure and gridspec
+        if groups[group_name] ==[] :
+
+            fig = plt.figure(figsize=self.fig_size2)
+            outer_gs = gridspec.GridSpec(2, 2, figure=fig, hspace=0.3, wspace=.3)
+        else:
+            # Assuming fig and outer_gs are provided for adding plots to existing axes
+            fig=groups[group_name][0]
+            pass
+        axes_list = []  # Store axes for reuse
+        # Iterate through the provided variables and plot
+        for idx, (variable, name) in enumerate(zip(variables, names)):
+            if len(groups[group_name])>0:  # Check if this is a subsequent call
+                ax_main = fig.axes[idx * 2]
+                ax_ratio = fig.axes[idx * 2 + 1]
+            else:
+                inner_gs = gridspec.GridSpecFromSubplotSpec(2, 1, subplot_spec=outer_gs[idx], height_ratios=[4, 1], hspace=0.15)
+                ax_main = fig.add_subplot(inner_gs[0])
+                ax_ratio = fig.add_subplot(inner_gs[1], sharex=ax_main)
+                axes_list.append((ax_main, ax_ratio))
+            ax_main.tick_params(axis='x', which='both', length=0, labelbottom=False)
+
+            # Example plot commands, replace with your actual data and plotting
+            if len(groups[group_name])==0:  # Check if this is a subsequent call
+
+                hep.histplot(h_real[idx], ax=ax_main, label="PYTHIA", histtype='fill', alpha=self.alpha)
+            hep.histplot(h_fake[idx], ax=ax_main, label=legend_name, histtype='step')
+
+            # Calculating ratio: Assume h_real and h_fake have compatible binning and can be directly divided
+            ratio = h_fake[idx].values()/ h_real[idx].values()
+            bins = h_real[idx].axes[0].edges  # Assuming 1D histograms and compatible binning
+
+            # Plotting the ratio as a bar plot
+            # Calculate bin centers and width for the bar plot
+
+            for i in range(len(bins)-1):
+                bin_start = bins[i]
+                bin_end = bins[i+1]
+                ratio_value = ratio[i]
+                # Draw a horizontal line for each bin
+                ax_ratio.hlines(ratio_value, bin_start, bin_end, lw=2,color=colors[1+len(groups[group_name])]['color'])
+                if i < len(bins) - 2:  # Check to avoid index out of bounds
+                    next_ratio_value = ratio[i+1]
+            # Vertical line connecting to the next bin
+                    ax_ratio.vlines(bin_end, ratio_value, next_ratio_value, lw=2,color=colors[1+len(groups[group_name])]['color'])
+            #ax_ratio.bar(bin_centers, ratio, width=bin_widths, align='center', fill=False,linestyle=linestyles[self.counter],label=legend_name)
+
+            # Setting labels and styles
+            ax_ratio.set_xlabel(name, fontsize=FONTSIZE)
+            ax_main.set_ylabel("Counts", fontsize=FONTSIZE)
+            ax_ratio.set_ylabel("Ratio", fontsize=FONTSIZE)
+            if len(groups[group_name])==0:
+                ax_main.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
+                ax_ratio.ticklabel_format(axis="y", style="sci", scilimits=(-3, 3), useMathText=True)
+            ax_ratio.set_ylim(0.5, 1.5)  # Adjust as necessary
+            ax_ratio.set_yticks([0.5, 1, 1.5])
+            ax_main.set_xlabel("")
+            if idx==2 or log and idx!=3:
+                ax_main.set_yscale("log")
+            if idx==2:
+                self._adjust_legend(ax_main, leg)
+        fig.tight_layout()
+        # Get the current color cycle
+
+        path="plots/jetnet{}".format(n_part)
+        if boxcox:
+            path+="/boxcox"
+        os.makedirs(path, exist_ok=True)
+        fig.savefig(path+"/{}_jetnet.pdf".format( group_name), format="pdf")
+        return fig
 
     def plot_corr(self,real,fake,model,leg=-1):
         # Sample data: batch_size of 100, 30 particles, 3 features each
@@ -391,12 +699,13 @@ class plotting_thesis():
                 ax.set_ylabel("Particles",fontsize=self.FONTSIZE+5)
             cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
             fig.colorbar(cax3.collections[0], cax=cbar_ax)
-            plt.tight_layout(rect=[0, 0, 0.9, 1])
+            fig.tight_layout(rect=[0, 0, 0.9, 1])
             if name=="Ground Truth":
-                plt.savefig("plots/jetnet30/corrGroundTruth.pdf",format="pdf")
+                fig.savefig("plots/jetnet30/corrGroundTruth.pdf",format="pdf")
             else:
-                plt.savefig("plots/jetnet30/"+model+"corr.pdf",format="pdf")
-            plt.show()
+                fig.savefig("plots/jetnet30/"+model+"corr.pdf",format="pdf")
+
+            fig.show()
         # diff=[diffs[0]-diffs[3],diffs[1]-diffs[4],diffs[2]-diffs[5]]
 
         # fig, axes = plt.subplots(1, 3, figsize=self.fig_size3)

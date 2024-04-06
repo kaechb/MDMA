@@ -25,11 +25,11 @@ hidden_features: 156
 hidden_gen: 128
 l_dim: 16
 l_dim_gen: 16
-lambda_m: 1
-lr: 0.0002
+lambda_m: 10
+lr: 0.00001
 mass_loss: true
 max: false
-max_epochs: 1000
+max_epochs: 50
 mean_field_loss: true
 model: NF
 n_dim: 3

@@ -1,18 +1,21 @@
 
+import ast
 import copy
 import math
+import os
 import pickle
 import sys
 import time
 import traceback
-import os
 
 import hist
 import numpy as np
+import pandas as pd
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn.utils.weight_norm as weight_norm
 import yaml
 from hist import Hist
 from jetnet.evaluation import (fpd, fpnd, get_fpd_kpd_jet_features, kpd, w1efp,
@@ -23,37 +26,30 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import (MinMaxScaler, PowerTransformer,
                                    StandardScaler)
+from torch.nn import Parameter
 from torch.nn import functional as FF
 from torch.nn.utils import spectral_norm, weight_norm
 from torch.nn.utils.rnn import pad_sequence
 # from comet_ml import Experiment
 from torch.nn.utils.weight_norm import WeightNorm
-
 from torch.utils.data import BatchSampler, DataLoader, Dataset, Sampler
 from tqdm import tqdm
 
-from utils import losses
 import wandb
 from fit import *
+from utils import losses
+from utils.helpers import (MultiheadL2Attention, WeightNormalizedLinear,
+                           create_mask, fit_kde, get_hists, mass,
+                           plotting_point_cloud, plotting_thesis, sample_kde)
 
-import pytorch_lightning as pl
-import math
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.nn.utils.weight_norm as weight_norm
-from torch.nn import Parameter
-from utils.helpers import (MultiheadL2Attention, WeightNormalizedLinear, mass,
-                     plotting_point_cloud, get_hists, plotting_thesis, fit_kde, sample_kde, create_mask)
-import pandas as pd
-import ast
 notebook_path = os.getcwd()
 import time
+
 # Construct the path to the directory containing 'fit'
 
 os.chdir(notebook_path)
 import sys
+
 # Add this parent directory to the system path
 sys.path.insert(0, notebook_path)
 
@@ -168,7 +164,7 @@ def print_table(results):
         tex+="\n"
     print(tex)
 
-def plot(name,fake,true,boxcox):
+def plot(name,fake,true,boxcox,groups):
     true=true[:,:,:3]
     m_f,m_t=mass(fake),mass(true)
     mins=torch.quantile(true.reshape(-1,3),0.0,dim=0)
@@ -194,11 +190,21 @@ def plot(name,fake,true,boxcox):
     plot=plotting_thesis()
     try:
         save_name=name if not boxcox else "boxcox/"+name
-        plot.plot_ratio(hists["hists_real"],hists["hists_fake"],weighted=False,leg=2,model_name=save_name,legend_name=replace_dict[name])
+
+        if name.find("t_tf")!=-1 or name.find("t_tnf")!=-1:
+
+            groups["GANs"].append(plot.plot_ratio_multiple(hists["hists_real"],hists["hists_fake"],weighted=False,leg=2,model_name=save_name,legend_name=replace_dict[name],group_name="GANs",groups=groups,boxcox=boxcox))
+        elif name.find("t_pf")!=-1 or name.find("t_ipf")!=-1 or name.find("t_apf")!=-1:
+            groups["PFs"].append(plot.plot_ratio_multiple(hists["hists_real"],hists["hists_fake"],weighted=False,leg=2,model_name=save_name,legend_name=replace_dict[name],group_name="PFs",groups=groups,boxcox=boxcox))
+        elif name.find("t_nf")!=-1 or name.find("t_ccnf")!=-1 or name.find("t_cnf")!=-1:
+            groups["NFs"].append(plot.plot_ratio_multiple(hists["hists_real"],hists["hists_fake"],weighted=False,leg=2,model_name=save_name,legend_name=replace_dict[name],group_name="NFs",groups=groups,boxcox=boxcox))
+
+        #plot.plot_ratio(hists["hists_real"],hists["hists_fake"],weighted=False,leg=2,model_name=save_name,legend_name=replace_dict[name])
         plot.plot_corr(true,fake,save_name,leg=-1)
     except:
         traceback.print_exc()
         print(name)
+    return groups
 
 def count_trainable_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -208,13 +214,15 @@ def jetnet_eval(model_dict,data_module,time_dict,param_dict,boxcox,debug=False):
     results=pd.DataFrame()
     true=data_module.real_test
     train=data_module.train
+    groups={"GANs":[], "NFs":[],"PFs":[]}
+
     mpgan=torch.tensor(np.load("/gpfs/dust/maxwell/user/kaechben/thesis/jetnet30/MPGAN/t.npy")[:50000]).cuda().float()
     #epic= np.load("/home/kaechben/EPiC-GAN/{}_epic.npy".format("t"))[..., [1, 2, 0]]
     for name,temp,num_param in zip(model_dict.keys(),model_dict.values(),param_dict.values()):
         if debug:
             results_temp={"name": ["t"], "model": [name], "w1m": [0], "w1p": [0],  "w1efp": [0], "kpd": [0], "fpd": [0],"time":[0],"parameters":[num_param]}
         else:
-            plot(name,temp,true,boxcox)
+            groups=plot(name,temp,true,boxcox,groups)
             w1m_ = w1m(temp[:, :, :3], true[:, :, :3], num_eval_samples=len(true))
             kpd_real = get_fpd_kpd_jet_features(true, efp_jobs=20)
             kpd_fake = get_fpd_kpd_jet_features(temp[: len(true),:,:3], efp_jobs=20)
@@ -240,6 +248,7 @@ def jetnet_eval(model_dict,data_module,time_dict,param_dict,boxcox,debug=False):
             fpd_ = fpd(kpd_real, kpd_fake,)
             results_temp = {"name": ["t"], "model": [name], "w1m": [w1m_], "w1p": [w1p_],  "w1efp": [w1efp_], "kpd": [kpd_], "fpd": [fpd_],"time":[35.7*1e-6 if name=="MPGAN" else -1],"parameters":[361123+355617]}#"w1efp": [w1efp_], "kpd": [kpd_], "fpd": [fpd_]
         results=pd.concat((results,pd.DataFrame(results_temp).set_index("name",drop=True)),axis=0)
+
     return results
 
 
@@ -257,13 +266,16 @@ param_dict={}
 name="jet"
 ckpt_dir="./ckpts/"
 ckpt_files = [f.split(".ckpt")[0] for f in os.listdir(ckpt_dir) if f.endswith('.ckpt')]
+data_dir="/beegfs/desy/user/kaechben/thesis/jetnet30/data_generated/"
 
 if not boxcox:
-    jetnet30=["t_ccnf_std","t_ipf_std","t_pf_std","t_apf_std","t_tf_std","t_tnf_std","t_nf_std","t_cnf_std",]#,
+    jetnet30=["t_ipf_std","t_pf_std","t_apf_std","t_tf_std","t_tnf_std","t_nf_std","t_cnf_std","t_ccnf_std",]#,
 else:
     jetnet30=["t_ipf","t_pf","t_apf","t_tf","t_tnf","t_nf","t_cnf","t_ccnf",]#,
+load=False
 
 for model_name in jetnet30:
+
     print(model_name)
     state_dict=torch.load(ckpt_dir+model_name+".ckpt")
     config=state_dict["hyper_parameters"]
@@ -367,6 +379,23 @@ for model_name in jetnet30:
         masks=masks[:,:config["num_part_eval"]]
     time_dict[model_name]=np.mean(np.array(model.times))/len(model_dict[model_name])
     param_dict[model_name]=count_trainable_params(model)
+    if load:
+        break
+if load:
+    with open(data_dir+"/model_dict.pkl", "rb") as f:
+        model_dict = pickle.load(f)
+    with open(data_dir+"/time_dict.pkl", "rb") as f:
+        time_dict = pickle.load(f)
+    with open(data_dir+"/param_dict.pkl", "rb") as f:
+        param_dict = pickle.load(f)
+
+if not load:
+    with open(data_dir+"/model_dict.pkl", "wb") as f:
+        pickle.dump(model_dict, f)
+    with open(data_dir+"/time_dict.pkl", "wb") as f:
+        pickle.dump(time_dict, f)
+    with open(data_dir+"/param_dict.pkl", "wb") as f:
+        pickle.dump(param_dict, f)
 
 results=jetnet_eval(model_dict,data_module,time_dict,param_dict,debug=False,boxcox=boxcox)
 results.to_csv("results.csv")

@@ -130,7 +130,7 @@ from utils.dataloader_calo import PointCloudDataloader
 
 FONTSIZE=20
 
-def make_plots(model_name, disco=False):
+def make_plots(model_name, disco=False,groups={},raw=False):
     import os
     ckptdir = "./ckpts/"
     if model_name.find("fm")>-1:
@@ -160,7 +160,7 @@ def make_plots(model_name, disco=False):
     data_module = PointCloudDataloader(**config)
     data_module.setup("validation")
     config = torch.load(ckpt)["hyper_parameters"]
-    model = MDMA.load_from_checkpoint(ckpt,) if config["model"]!="FM" else FM.load_from_checkpoint(ckpt)
+    model = MDMA.load_from_checkpoint(ckpt, raw=raw) if config["model"]!="FM" else FM.load_from_checkpoint(ckpt,raw=raw)
     model.eval_metrics=False
 
     setup_model_with_data(model, data_module, config)
@@ -221,16 +221,15 @@ def make_plots(model_name, disco=False):
         params=sum(p.numel() for p in model.parameters() if p.requires_grad)
     print("params",params,"time",total)
     plotter = plotting_thesis(big=True)
-    plotter.plot_ratio_calo(model.hists_real, model.hists_fake, weighted=False, leg=2, model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm")==-1 else "MDMA-FLOW")
-    plt.show()
-    plotter.plot_ratio_calo(model.weighted_hists_real, model.weighted_hists_fake, weighted=True, leg=2, model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm")==-1 else "MDMA-FLOW")
-    plotter.plot_response(model.response_real,model.response_fake,model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm")==-1 else "MDMA-FLOW")
+    groups["unweighted"].append(plotter.plot_calo_multiple(model.hists_real, model.hists_fake, weighted=False, leg=2-int(raw), model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow",groups=groups,group_name="unweighted"))
+
+    groups["weighted"].append(plotter.plot_calo_multiple(model.weighted_hists_real, model.weighted_hists_fake, weighted=True, leg=2-int(raw), model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow",groups=groups,group_name="weighted"))
+    groups["responses"].append(plotter.plot_response_multiple(model.response_real,model.response_fake,model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow",groups=groups,group_name="responses"))
     print("saved plots",model_name)
     if model.hparams.dataset=="calo":
         torch.save(model.fake,"/beegfs/desy/user/kaechben/data_generated/calochallenge_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
         torch.save(model.batch,"/beegfs/desy/user/kaechben/data_generated/calochallenge_reals_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
         torch.save(model.masks,"/beegfs/desy/user/kaechben/data_generated/calochallenge_masks_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
-
         torch.save(model.conds,"/beegfs/desy/user/kaechben/data_generated/calochallenge_conds_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
         torch.save(model.times,"/beegfs/desy/user/kaechben/data_generated/calochallenge_times_{}_{}.pt".format(model_name,"big" if model.hparams.bins[1]==50 else "middle"))
 
@@ -257,6 +256,7 @@ def create_mask(n, size=30):
 
 torch.set_float32_matmul_precision("medium")
 import json
+groups={"weighted":[],"unweighted":[],"responses":[]}
 if os.path.exists('params_calo_big.json'):
     with open('params_calo_big.json', 'r') as json_file:
         param_dict = json.load(json_file)
@@ -265,8 +265,8 @@ if os.path.exists('params_calo_big.json'):
 else:
     time_dict={}
     param_dict={}
-for i,model_name in enumerate(["mdma_fm_calo_big","mdma_calo_big",]):#
-    model,total,params=make_plots(model_name)
+for i,model_name in enumerate(["mdma_calo_big","mdma_fm_calo_big",]):#
+    model,total,params=make_plots(model_name,groups=groups)
     time_dict[model_name]=total
     param_dict[model_name]=params
 with open('params_calo_big.json', 'w') as json_file:

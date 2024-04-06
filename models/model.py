@@ -64,18 +64,15 @@ class Block(nn.Module):
 
     def forward(self, x, x_cls,cond, mask,need_weights=False):
         res = x.clone()
-
         x = self.fc0(self.act(x))
         if self.cloudnorm:
             x = self.cloudnorm(x,mask)
         x_cls = self.ln(self.fc0(self.act(x_cls)))
         x_cls,w = self.attn(x_cls, x, x, key_padding_mask=mask,need_weights=need_weights)
-
         if self.glu:
             x_cls = self.act(F.glu(torch.cat((x_cls,self.cond_cls(cond[...,:])),dim=-1)))
         else:
             x_cls =self.fc1_cls(torch.cat((x_cls,cond[:,:,-1:]),dim=-1))#+res_cls#+x.mean(dim=1).
-
         x = self.fc1(torch.cat((x,x_cls.expand(-1,x.shape[1],-1)),dim=-1))+res
         x_cls=self.act(self.fc2_cls(x_cls))
 
@@ -101,13 +98,17 @@ class Gen(nn.Module):
         if self.cond:
             x=F.glu(torch.cat((x,self.cond(cond[:,:,:1]).expand(-1,x.shape[1],-1).clone()),dim=-1))
         x_cls = x.sum(1).unsqueeze(1).clone()/self.avg_n
+        ws=[]
         for layer in self.encoder:
-            x, x_cls, w = layer(x,x_cls=x_cls,mask=mask,cond=cond)
+            x, x_cls, w = layer(x,x_cls=x_cls,mask=mask,cond=cond,need_weights=weight)
 
         # if self.cond:
         #     x=F.glu(torch.cat((x,self.cond(cond[:,:,:1]).expand(-1,x.shape[1],-1)),dim=-1))
         x= self.out(self.act(x))
-        return x
+        if not weight:
+            return x
+        else:
+            return x,w
 
 class Disc(nn.Module):
     def __init__(self, n_dim, l_dim, hidden, num_layers, heads,dropout,cond_dim,weightnorm,cloudnorm,glu, **kwargs):
@@ -134,11 +135,16 @@ class Disc(nn.Module):
         x = self.act(self.embbed(x))
         x_cls = torch.cat(((x.sum(1)/self.avg_n).unsqueeze(1).clone(),cond),dim=-1) if self.cond else (x.sum(1)/self.avg_n).unsqueeze(1).clone()
         x_cls = self.act(self.embbed_cls(x_cls))
+        ws=[]
         for layer in self.encoder:
             x,x_cls,w = layer(x, x_cls=x_cls, mask=mask,cond=cond)
             mean_field=x_cls.clone()
+            ws.append(w.cpu().detach())
         x_cls = self.act(self.fc2(self.act(self.fc1(self.act(torch.cat((x_cls,cond),dim=-1))))))
-        return self.out(x_cls),mean_field
+        if not weight:
+            return self.out(x_cls),mean_field
+        else:
+            return self.out(x_cls),mean_field,w[0]
 
 if __name__ == "__main__":
     #def count_parameters(model): return sum(p.numel() for p in model.parameters() if p.requires_grad)

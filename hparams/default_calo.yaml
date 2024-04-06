@@ -55,6 +55,7 @@ num_layers: 4
 num_layers_gen: 6
 num_z: 45
 opt: AdamW
+raw: false
 sampler: true
 spectralnorm: false
 stop_mean: true

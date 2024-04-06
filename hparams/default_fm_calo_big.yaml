@@ -41,6 +41,7 @@ name: calo
 num_heads: 16
 opt: AdamW
 parton: t
+raw: false
 sampler: true
 t_local_cat: true
 t_global_cat: true
