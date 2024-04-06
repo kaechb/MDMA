@@ -67,7 +67,7 @@ class torch_wrapper(torch.nn.Module):
 class FM(pl.LightningModule):
 
 
-    def __init__(self,**hparams):
+    def __init__(self,raw=False,**hparams):
 
         '''This initializes the model and its hyperparameters'''
         super().__init__()
@@ -78,8 +78,10 @@ class FM(pl.LightningModule):
         self.name=hparams["name"]
         self.n_part=self.hparams.n_part
         self.times=[]
+        self.raw=raw
         #This is the Normalizing flow model to be used later, it uses as many
         #coupling_layers as given in the config
+
         if self.hparams.boxcox:
             from models.fm_models import MDMA
         else:
@@ -175,7 +177,8 @@ class FM(pl.LightningModule):
 
         else:
             fake= self.scaler.inverse_transform(fake)
-            fake[:,:,2]=(fake[:,:,2]+torch.randint(0,self.hparams.bins[2], size=(fake.shape[0],1),device=fake.device).expand(-1,mask.shape[1]))%self.hparams.bins[2]
+            if not self.hparams.raw:
+                fake[:,:,2]=(fake[:,:,2]+torch.randint(0,self.hparams.bins[2], size=(fake.shape[0],1),device=fake.device).expand(-1,mask.shape[1]))%self.hparams.bins[2]
             fake[mask]=0
 
 

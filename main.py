@@ -175,7 +175,10 @@ def train(config, logger, data_module, ckpt=False):
             else:
                 model = FM.load_from_checkpoint(ckpt, bins=config["bins"],lr=config["lr"],exact=config["exact"],middle=config["middle"],max=config["max"],num_batches=num_batches)
         elif config["model"] == "NF":
-            model = NF.load_from_checkpoint(ckpt, lambda_m=config["lambda_m"],mass_loss=config["mass_loss"],)
+            model = NF.load_from_checkpoint(ckpt, lambda_m=config["lambda_m"],mass_loss=config["mass_loss"],boxcox=config["boxcox"])
+            print("model.hparams.boxcox",model.hparams.boxcox)
+
+            model.hparams.boxcox=config["boxcox"]
         elif config["model"] == "PNF":
             model = PNF.load_from_checkpoint(ckpt, adversarial=config["adversarial"],strict=False)
         elif config["model"] == "TNF":
@@ -183,6 +186,7 @@ def train(config, logger, data_module, ckpt=False):
         elif config["model"] == "TF":
             model = TF.load_from_checkpoint(ckpt,)
         model = setup_model(config, data_module, model)
+        print(model.scaler)
 
     model.load_datamodule(data_module)
 
@@ -211,10 +215,10 @@ def train(config, logger, data_module, ckpt=False):
         ),
         check_val_every_n_epoch=(
             1
-            if config["model"] == "PNF"
+            if config["model"] == "PNF" or config["model"]== "NF" and config["ckpt"]
             else (
                 10  if (config["ckpt"] == "" and config["dataset"] == "jet")
-                else 500 if (config["dataset"] == "jet") else None
+                else 50 if (config["dataset"] == "jet") else None
             )
         ),
         num_sanity_val_steps=1,

@@ -150,11 +150,15 @@ class NF(pl.LightningModule):
 
         if self.hparams.context_features==1:
             scaled_batch=batch.clone().reshape(-1,self.n_part,self.n_dim)
-            std_batch=scaled_batch[:,:,:2]
-            pt_batch=scaled_batch[:,:,-1:]
-            std_batch= self.scaler.inverse_transform(std_batch)
-            pt_batch= self.pt_scaler.inverse_transform(pt_batch)
-            scaled_batch=torch.cat([std_batch,pt_batch],dim=2)
+            if self.hparams.boxcox:
+                std_batch=scaled_batch[:,:,:2]
+                pt_batch=scaled_batch[:,:,-1:]
+                std_batch= self.scaler.inverse_transform(std_batch)
+                pt_batch= self.pt_scaler.inverse_transform(pt_batch)
+                scaled_batch=torch.cat([std_batch,pt_batch],dim=2)
+            else:
+                scaled_batch=self.scaler.inverse_transform(scaled_batch)
+
             # scaled_batch[~mask,-1:]= self.pt_scaler.inverse_transform(scaled_batch[~mask,-1:])
             cond=mass(scaled_batch).reshape(-1,1)#
 

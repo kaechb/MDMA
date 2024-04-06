@@ -11,7 +11,7 @@ bins:
   - 45
   - 16
   - 9
-ckpt: 'ckpts/mdma_calo.ckpt'
+ckpt: ''
 continue: false
 cloudnorm: false
 cloudnormgen: false

@@ -110,10 +110,11 @@ class PointCloudDataloader(pl.LightningDataModule):
     one thing to note is the custom standard scaler that works on tensors
    """
 
-    def __init__(self,name,batch_size,max=False,scaler_path="./",middle=True,**kwargs):
+    def __init__(self,name,batch_size,max=False,scaler_path="./",middle=True,max_tokens=500_000,**kwargs):
         self.name=name
         self.batch_size=batch_size
         self.max=max
+        self.max_tokens=max_tokens
         self.new=True if name.find("new")>-1 else False
         self.scaler_path=scaler_path
         self.dataset="middle" if middle else "big"
@@ -154,21 +155,21 @@ class PointCloudDataloader(pl.LightningDataModule):
         self.train_iterator = BatchIterator(
                             self.data,
                             batch_size = self.batch_size,
-                            max_tokens_per_batch=200_000,
+                            max_tokens_per_batch=self.max_tokens//2.5,
                             drop_last=True,
                             shuffle=True
                             )
         self.val_iterator = BatchIterator(
                             self.val_data,
                             batch_size = self.batch_size,
-                            max_tokens_per_batch=500_000,
+                            max_tokens_per_batch=self.max_tokens//3,
                             drop_last=False,
                             shuffle=True
                             )
         self.test_iterator = BatchIterator(
                             self.test_data,
                             batch_size = self.batch_size*10,
-                                max_tokens_per_batch=500_000,
+                                max_tokens_per_batch=self.max_tokens,
                                 drop_last=False,
                                 shuffle=False
                                 )

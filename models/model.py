@@ -139,7 +139,8 @@ class Disc(nn.Module):
         for layer in self.encoder:
             x,x_cls,w = layer(x, x_cls=x_cls, mask=mask,cond=cond)
             mean_field=x_cls.clone()
-            ws.append(w.cpu().detach())
+            if w is not None:
+                ws.append(w.cpu().detach())
         x_cls = self.act(self.fc2(self.act(self.fc1(self.act(torch.cat((x_cls,cond),dim=-1))))))
         if not weight:
             return self.out(x_cls),mean_field
