@@ -1,6 +1,6 @@
 ---
 avg_n: 70
-batch_size: 128
+batch_size: 2048
 bins:
   - 100
   - 45
@@ -13,7 +13,8 @@ names:
   - R
 boxcox: false
 cond_dim: 2
-ckpt: "ckpts/mdma_fm_calo_small.ckpt"
+continue: false
+ckpt: "ckpts/mdma_calo_fm_small.ckpt"
 dataset: calo
 decay: 0.999
 dropout: 0
@@ -33,6 +34,7 @@ layers: 16
 lr: 0.00001
 max: true
 max_epochs: 200
+max_tokens: 1600_000
 model: FM
 middle: false
 n_dim: 4

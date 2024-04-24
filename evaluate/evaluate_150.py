@@ -115,6 +115,7 @@ def make_plots(model_name,data_module, disco=False):
         config["sampler"]=False
         config["boxcox"]=boxcox
         print("boxcox",boxcox)
+        model_name=model_name.replace("_ot","")
         # Choose the model class based on the model name
 
         if model_name.find("fm")==-1:
@@ -174,8 +175,8 @@ def make_plots(model_name,data_module, disco=False):
         mins=true.reshape(-1, 3).min()
 
         maxs=true.reshape(-1, 3).max()
-        fake = torch.clamp(fake, min=mins, max=maxs)
-        true = torch.clamp(true, min=mins, max=maxs)
+        fake = torch.clamp(fake, min=mins, max=maxs*0.99)
+        true = torch.clamp(true, min=mins, max=maxs*0.99)
         with open("/beegfs/desy/user/kaechben/thesis/eval_jetnet150/{}_jets.npy".format(model_name), "wb") as f:
             np.save(f,fake.cpu().numpy())
         total=(time.time()-start)/500000.
@@ -391,9 +392,9 @@ def print_table(results):
     print(tex)
 import json
 #,"mdma_fm_jet","EPiC-FM","IN","EPiC-GAN"
-boxcox=True
+boxcox=False
 if not boxcox:
-    models=["mdma_jet_std","mdma_fm_jet_std","EPiC-FM","IN","EPiC-GAN"]
+    models=["mdma_jet","mdma_fm_jet_std","EPiC-FM","IN","EPiC-GAN"]
 else:
     models=["mdma_jet","mdma_fm_jet","EPiC-FM","IN","EPiC-GAN"]
 print("boxcox:",boxcox)
@@ -415,7 +416,7 @@ with open('params.json', 'r') as json_file:
     param_dict = json.load(json_file)
 with open('times.json', 'r') as json_file:
     time_dict = json.load(json_file)
-if True:
+if False:
 
 
     for i,model_name in enumerate(models):#
@@ -427,7 +428,7 @@ if True:
     with open('times.json', 'w') as json_file:
         json.dump(time_dict, json_file)
 
-
+models=[m.replace("_ot","") for m in models]
 results=calc_metrics(true,train,time_dict,param_dict,models)
 
 results.to_csv("results150.csv")

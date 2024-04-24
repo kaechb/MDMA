@@ -22,6 +22,10 @@ from utils.preprocess import DQ, Cart, DQLinear, LogitTransformer, ScalerBase
 from utils.preprocess import SqrtTransformer
 from utils.preprocess import SqrtTransformer as LogTransformer
 import time
+
+        # return self.a * torch.pow(x, self.b)
+
+
 def create_mask(n, size=30):
     # Ensure n is a 1D tensor
     n = n.flatten()
@@ -130,12 +134,12 @@ from utils.dataloader_calo import PointCloudDataloader
 
 FONTSIZE=20
 
-def make_plots(model_name,data_module, disco=False,raw=False,groups={}):
+def make_plots(model_name,data_module, disco=False,raw=False,groups={},sample_n=False):
     import os
     ckptdir = "./ckpts/"
 
     if model_name.find("fm") >-1:
-        ckpt = "{}_small.ckpt".format(model_name)
+        ckpt = "{}.ckpt".format(model_name)
     else:
         ckpt = "{}.ckpt".format(model_name)
 
@@ -160,15 +164,18 @@ def make_plots(model_name,data_module, disco=False,raw=False,groups={}):
 
 
     config["max"]=False
-    model = MDMA.load_from_checkpoint(ckpt,raw=raw) if config["model"]!="FM" else FM.load_from_checkpoint(ckpt,raw=raw)
+    model = MDMA.load_from_checkpoint(ckpt,raw=raw,sample_n=sample_n) if config["model"]!="FM" else FM.load_from_checkpoint(ckpt,raw=raw,sample_n=sample_n)
     model.eval_metrics=False
 
 # Assuming `model` is defined elsewhere in your code
 
     setup_model_with_data(model, data_module, config)
 
-    mins,maxs,n,min_response,max_response=calculate_data_bounds(data_module.val_dataloader(), model.n_dim)
+    mins,maxs,n,min_response,max_response=calculate_data_bounds(data_module.test_dataloader(), model.n_dim)
+    print(data_module.n_test.sum(),torch.cat(n).sum())
 
+    data_module.n_test=data_module.n_test.clamp(torch.cat(n).min(),torch.cat(n).max())
+    print(data_module.n_test.sum(),torch.cat(n).sum())
     # n_max=n.max()
     # n=n.float().cpu()
     # n_kde=fit_kde(n)
@@ -222,11 +229,11 @@ def make_plots(model_name,data_module, disco=False,raw=False,groups={}):
     plotter = plotting_thesis()
     if raw:
         model_name+="_raw"
-    groups["unweighted"].append(plotter.plot_calo_multiple(model.hists_real, model.hists_fake, weighted=False, leg=2-int(raw), model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow",groups=groups,group_name="unweighted",raw=raw))
+    groups["unweighted"].append(plotter.plot_calo_multiple(model.hists_real, model.hists_fake, weighted=False, leg=2-int(raw), model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow",groups=groups,group_name="unweighted",raw=raw,sample_n=sample_n))
 
-    groups["weighted"].append(plotter.plot_calo_multiple(model.weighted_hists_real, model.weighted_hists_fake, weighted=True, leg=2-int(raw), model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow",groups=groups,group_name="weighted",raw=raw))
+    groups["weighted"].append(plotter.plot_calo_multiple(model.weighted_hists_real, model.weighted_hists_fake, weighted=True, leg=2-int(raw), model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow",groups=groups,group_name="weighted",raw=raw,sample_n=sample_n))
     print(1,groups["responses"])
-    fig=plotter.plot_response_multiple(model.response_real,model.response_fake,model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow",groups=groups,group_name="responses",raw=raw)
+    fig=plotter.plot_response_multiple(model.response_real,model.response_fake,model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow",groups=groups,group_name="responses",raw=raw,sample_n=sample_n)
     print(fig)
     groups["responses"].append(fig)
     print(2,groups["responses"])
@@ -261,7 +268,8 @@ def create_mask(n, size=30):
 torch.set_float32_matmul_precision("medium")
 import json
 import yaml
-raw=True
+raw=False
+sample_n=True
 groups={"weighted":[],"unweighted":[],"responses":[]}
 config = config = yaml.load(
         open("hparams/default_calo.yaml"), Loader=yaml.FullLoader
@@ -275,8 +283,8 @@ with open('times_calo.json', 'r') as json_file:
 if True:
     time_dict={}
     param_dict={}
-    for i,model_name in enumerate(["mdma_calo","mdma_fm_calo"]):#"mdma_fm_calo",
-        model,total,params,groups=make_plots(model_name,data_module,raw=raw, groups=groups)
+    for i,model_name in enumerate(["mdma_calo","mdma_calo_fm_small"]):#"mdma_fm_calo",
+        model,total,params,groups=make_plots(model_name,data_module,raw=raw, groups=groups,sample_n=sample_n)
         time_dict[model_name]=total
         param_dict[model_name]=params
 with open('params_calo.json', 'w') as json_file:

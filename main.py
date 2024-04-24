@@ -108,6 +108,7 @@ def setup_model(config, data_module=None, model=False):
         model.n_dim = 4
         model=setup_scaler_calo(config, data_module,model)
         model.E_loss_mean = None
+
     else:
 
         model.bins = [100, 100, 100]
@@ -197,7 +198,7 @@ def train(config, logger, data_module, ckpt=False):
     model.avg_n = torch.cat(n, dim=0).float().cuda().mean()
     if config["model"] == "MDMA":
         model.gen_net.avg_n = torch.cat(n, dim=0).float().cuda().mean()
-        model.dis_net.avg_n = torch.cat(n, dim=0).float().cuda().mean()
+        model.dis_net.avg_n  = torch.cat(n, dim=0).float().cuda().mean()
     trainer = pl.Trainer(
         devices=1,
         precision=32,
@@ -209,7 +210,7 @@ def train(config, logger, data_module, ckpt=False):
         max_epochs=config["max_epochs"],
         callbacks=callbacks,
         val_check_interval=(
-            10000 if config["dataset"] == "calo" and config["middle"]==False  and config["model"] == "FM" else 30000
+            10000 if config["dataset"] == "calo" and config["middle"]==False  and config["model"] == "FM" else 15000
             if (config["dataset"] == "calo") and config["model"] == "FM"
             else 50000 if config["dataset"] == "calo" else None
         ),

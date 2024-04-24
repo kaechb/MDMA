@@ -16,11 +16,11 @@ unset LD_PRELOAD
 source /etc/profile.d/modules.sh
 module purge
 module load maxwell gcc/9.3
-# module load anaconda3/5.2
-# . conda-init
-# conda activate mdma-cfm
-module load python/3.10
-source /gpfs/dust/maxwell/user/kaechben/final/bin/activate
+module load anaconda3/5.2
+. conda-init
+conda activate mdma-cfm
+# module load python/3.10
+# source /gpfs/dust/maxwell/user/kaechben/final/bin/activate
 cd /home/$USER/MDMACalo/
 python3 main.py calo
 

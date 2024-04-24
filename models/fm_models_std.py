@@ -207,7 +207,7 @@ class MDMA(nn.Module):
             x_cls = F.glu(torch.cat((x_cls,self.cond(cond.float())),dim=-1))
         else:
 
-            cond=mask.int().sum(1,keepdim=True).reshape(-1,1,1) ###REEMOVE THIS FOR STD CKPT
+            cond=mask.int().sum(1,keepdim=True).reshape(-1,1,1)###REEMOVE THIS FOR STD CKPT
 
         for layer in self.encoder:
             x, x_cls, w = layer(x, x_cls=x_cls, mask=mask, cond=cond, t=t)

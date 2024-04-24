@@ -87,15 +87,14 @@ class FM(pl.LightningModule):
         else:
             from models.fm_models_std import MDMA
         self.net = MDMA(**self.hparams).to("cuda")
-
         self.FM = TargetConditionalFlowMatcher(sigma=0.) if self.hparams.exact=="target" else ConditionalFlowMatcher(sigma=0.) if not self.hparams.exact else ExactOptimalTransportConditionalFlowMatcher()
-
-
 
 
     def load_datamodule(self,data_module):
         '''needed for lightning training to work, it just sets the dataloader for training and validation'''
         self.data_module=data_module
+        if self.hparams.dataset=="calo" and False:
+            self.n_reg=data_module.n_reg
 
     def on_after_backward(self) -> None:
         '''This is a genious little hook, sometimes my model dies, i have no clue why. This saves the training from crashing and continues'''
@@ -113,6 +112,7 @@ class FM(pl.LightningModule):
                 raise ValueError('5 nangrads in a row')
         else:
             self.counter=0
+
     def forward(
         self,
         t: Tensor,
@@ -120,7 +120,6 @@ class FM(pl.LightningModule):
         mask: Tensor = None,
         cond: Tensor = None,
     ) -> Tensor:
-
         return self.net(t, x, mask,cond)
 
     def on_validation_epoch_start(self, *args, **kwargs):
@@ -145,7 +144,9 @@ class FM(pl.LightningModule):
             on the generative sample and to compare to the simulated one, we need to inverse the scaling before calculating the mass
             because calculating the mass is a non linear transformation and does not commute with the mass calculation'''
         with torch.no_grad():
-            x0 = torch.randn(batch.shape).to(self.device)
+            shape=list(batch.shape)
+            shape[1]=mask.shape[1]
+            x0 = torch.randn(shape).to(self.device)
             wrapped_cnf = torch_wrapper(model=self.net, mask=mask, cond=cond)
             node=NeuralODE(lambda t,x,args: wrapped_cnf(t,x,mask,cond), solver="midpoint")
 
@@ -183,6 +184,7 @@ class FM(pl.LightningModule):
 
 
         return fake,fake_scaled
+
     def on_load_checkpoint(self, checkpoint: dict) -> None:
         state_dict = checkpoint["state_dict"]
         model_state_dict = self.state_dict()
@@ -199,13 +201,7 @@ class FM(pl.LightningModule):
             checkpoint.pop("optimizer_states", None)
     def configure_optimizers(self):
 
-
-
         opt_g = torch.optim.AdamW(self.net.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.weightdecay)
-        # if self.hparams.ckpt:
-        #     state_dict=torch.load(self.hparams.ckpt,map_location="cuda")
-        #     opt_g.load_state_dict(state_dict["optimizer_states"][0])
-
         lr_scheduler= LinearWarmupCosineAnnealingLR(opt_g, warmup_epochs=self.trainer.max_epochs*self.hparams.num_batches//10,max_epochs=self.trainer.max_epochs*self.hparams.num_batches)
         print("max epochs",self.trainer.max_epochs,"num_steps",self.trainer.max_epochs*self.hparams.num_batches)
         #return {"optimizer":opt_g,"lr_scheduler":lr_scheduler}#({'optimizer': opt_g, 'frequency': 1, 'scheduler':None if not self.lr_schedule else scheduler})
@@ -230,20 +226,16 @@ class FM(pl.LightningModule):
         batch,mask, cond= batch[0],batch[1], batch[2]
         x0,x1 =torch.randn_like(batch), batch
         t, xt, ut = self.FM.sample_location_and_conditional_flow(x0,x1)
-
-
         vt = self.net(t, xt,mask=mask,cond=cond).cuda()
         # zeroing errors from padded particles
         vt[mask]=0
         ut[mask]=0
         loss = torch.mean((vt - ut) ** 2)
-
         self.log("train/pointsperbatch", (~mask).int().sum(), on_step=True)
+        self.log("train/total", mask.shape[1]*mask.shape[0], on_step=True)
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=False)
         self.log("train/mean",vt[~mask].mean(), on_step=False, on_epoch=True, prog_bar=False)
         self.log("train/std",vt[~mask].std(), on_step=False, on_epoch=True, prog_bar=False)
-        # if loss>10:
-        #     return None
         return {"loss": loss}
 
 
@@ -260,10 +252,6 @@ class FM(pl.LightningModule):
                 start=time.time()
                 fake,_ = self.sampleandscale(batch=batch, mask=mask,cond=cond,num_samples=200)
                 self.times.append(time.time()-start)
-
-                # self.conds.append(cond.cpu())
-
-
                 if self.hparams.dataset=="jet":
                     batch=batch.reshape(-1,batch.shape[1],self.n_dim)
                     fake=fake.reshape(-1,batch.shape[1],self.n_dim)
@@ -329,9 +317,6 @@ class FM(pl.LightningModule):
             self.plot = plotting_point_cloud(step=self.global_step, logger=self.logger)
             try:
                 self.plot.plot_jet(self.hists_real,self.hists_fake)
-
-                # self.plot.plot_scores(torch.cat(self.scores_real).numpy().reshape(-1), torch.cat(self.scores_fake.reshape(-1)).numpy(), False, self.global_step)
-
             except Exception as e:
                 fig,ax=plt.subplots(1,4,figsize=[4*6.4, 6.4])
 
@@ -398,6 +383,7 @@ class FM(pl.LightningModule):
                 self.plot.plot_response(self.response_fake, self.response_real )
         except:
             traceback.print_exc()
+
     def on_test_epoch_start(self, *args, **kwargs):
         self.net.eval()
         self.times=[]
@@ -413,32 +399,38 @@ class FM(pl.LightningModule):
         if self.hparams.dataset=="calo":
             self.weighted_hists_real,self.weighted_hists_fake=hists["weighted_hists_real"],hists["weighted_hists_fake"]
             self.response_real,self.response_fake=hists["response_real"],hists["response_fake"]
+
     def test_step(self, batch, batch_idx):
         '''This calculates some important metrics on the hold out set (checking for overtraining)'''
 
         with torch.no_grad():
-
             if batch[0].shape[1]>0:
-
                 self._log_dict = {}
-                batch, mask, cond = batch[0], batch[1], batch[2]
+                if self.hparams.dataset=="calo":
+                    batch, mask, cond, n_sample = batch[0], batch[1], batch[2], batch[3]
+                    n_sample=torch.tensor(n_sample)
 
+                else:
+                    batch, mask, cond= batch[0], batch[1], batch[2]
 
                 batch[mask]=0
                 if self.hparams.dataset=="jet":
                     n,_=sample_kde(len(batch)*10,self.n_kde,self.m_kde)
-                    mask=create_mask(n,size=self.hparams.n_part).cuda()
+                    sampled_mask=create_mask(n,size=self.hparams.n_part).cuda()
+                    sampled_mask=sampled_mask[:len(batch)].bool()
+                    cond=(~sampled_mask).sum(1).float().reshape(-1,1,1)/self.data_module.n_mean
+                else:
+                    if self.hparams.sample_n:
+                        sampled_mask=create_mask(n_sample).cuda()
+                        sampled_mask=sampled_mask[:len(batch)].bool()
 
-                    mask=mask[:len(batch)].bool()
-                    cond=(~mask).sum(1).float().reshape(-1,1,1)/self.data_module.n_mean
+                    else:
+                        sampled_mask=mask.clone()
 
                 self.w1ps = []
                 start=time.time()
-                fake,fake_scaled=self.sampleandscale(batch=batch, mask=mask,cond=cond,num_samples=200)
-                # fake = self.sample(batch=batch, mask=mask,cond=cond,num_samples=2)
-
+                fake,fake_scaled=self.sampleandscale(batch=batch, mask=sampled_mask,cond=cond,num_samples=200)
                 self.times.append((time.time()-start)/len(fake))
-
                 if self.hparams.dataset=="calo":
                     maxs=torch.tensor([6499, self.hparams.bins[1]-1,self.hparams.bins[2]-1,self.hparams.bins[3]-1],device=self.device)
                     fake=torch.clamp(fake,torch.zeros_like(fake), maxs)
@@ -448,16 +440,16 @@ class FM(pl.LightningModule):
                     response_fake=torch.clamp(response_fake,0.,1.99).cpu().numpy().reshape(-1)
                     for i in range(self.n_dim):
                         self.hists_real[i].fill(batch[~mask.squeeze(-1)][:, i].cpu().long().numpy())
-                        self.hists_fake[i].fill(fake[~mask.squeeze(-1)][:, i].cpu().long().numpy())
+                        self.hists_fake[i].fill(fake[~sampled_mask.squeeze(-1)][:, i].cpu().long().numpy())
                         if i>=1:
                             self.weighted_hists_real[i-1].fill(batch[~mask.squeeze(-1)][:, i].cpu().long().numpy(),weight=batch[~mask.squeeze(-1)][:, 0].cpu().numpy())
-                            self.weighted_hists_fake[i-1].fill(fake[~mask.squeeze(-1)][:, i].cpu().long().numpy(),weight=fake[~mask.squeeze(-1)][:, 0].cpu().numpy())
+                            self.weighted_hists_fake[i-1].fill(fake[~sampled_mask.squeeze(-1)][:, i].cpu().long().numpy(),weight=fake[~sampled_mask.squeeze(-1)][:, 0].cpu().numpy())
                     self.response_real.fill(response_real)
                     self.response_fake.fill(response_fake)
                 self.fake_unscaled.append(fake_scaled.cpu())
 
                 batch=batch.reshape(-1,batch.shape[1],batch.shape[2])
-                fake=fake.reshape(-1,batch.shape[1],batch.shape[2])
+                fake=fake.reshape(-1,fake.shape[1],fake.shape[2])
                 self.batch.append(batch.cpu())
                 self.fake.append(fake.cpu())
                 self.masks.append(mask.cpu())

@@ -15,6 +15,9 @@ from torch.utils.data import BatchSampler, DataLoader, Dataset
 from utils.preprocess import (DQ, DQLinear, LogitTransformer, ScalerBase,
                             SqrtTransformer)
 
+from utils.helpers import PowerLawModel, Nflow
+
+
 class BatchIterator:
     def __init__(self, data_source, max_tokens_per_batch, batch_size, drop_last=False, shuffle=True):
         self.data_source = data_source
@@ -80,12 +83,15 @@ class BatchIterator:
         return len(self.batches)
 
 class CustomDataset(Dataset):
-    def __init__(self, data, E):
+    def __init__(self, data, E,n_test=None):
         assert len(data) == len(E), "The lengths of data and E are not equal"
         self.data = data
         self.E = E
+        self.n_test=n_test
 
     def __getitem__(self, index):
+        if self.n_test is not None:
+            return self.data[index], self.E[index],self.n_test[index]
         return self.data[index], self.E[index]
 
     def __len__(self):
@@ -95,14 +101,20 @@ class CustomDataset(Dataset):
 
 
 def pad_collate_fn(batch,avg_n):
-
-    batch,E=zip(*batch)
+    if len(batch[0])==2:
+        batch,E=zip(*batch)
+        n_test=None
+    else:
+        batch,E,n_test=zip(*batch)
     max_len = max(len(sample) for sample in batch)
     padded_batch =pad_sequence(batch, batch_first=True, padding_value=0.0)[:,:,:4].float()
     mask = ~(torch.arange(max_len).expand(len(batch), max_len) < torch.tensor([len(sample) for sample in batch]).unsqueeze(1))
     E=(torch.stack(E).log()-10).float()
-    cond=torch.cat((E.unsqueeze(-1).unsqueeze(-1),mask.sum(1).unsqueeze(-1).unsqueeze(-1)/avg_n),dim=-1)
+    cond=torch.cat((E.unsqueeze(-1).unsqueeze(-1),(~mask).int().sum(1).float().unsqueeze(-1).unsqueeze(-1)/avg_n),dim=-1)
+    if n_test is not None:
+        return padded_batch,mask,cond,n_test
     return padded_batch,mask,cond
+
 
 
 class PointCloudDataloader(pl.LightningDataModule):
@@ -123,6 +135,17 @@ class PointCloudDataloader(pl.LightningDataModule):
         self.avg_n=1587.93468#these are the average number of particles per cloud, used to scale the condition
         self.n_kde=None
         self.m_kde=None
+        bins=5
+        # self.n_flow = Nflow()
+        # self.n_flow.load_state_dict(torch.load("ckpts/n_flow_{}.pt".format("middle" if middle else "big")))
+
+        # self.n_flow.load_state_dict(torch.load("ckpts/n_flow_{}.pt".format("middle" if middle else "big")))
+        self.n_reg = PowerLawModel(coeffs=torch.zeros(6))
+        self.n_reg.load_state_dict(torch.load("ckpts/n_reg_{}.pt".format("middle" if middle else "big")))
+        print(self.n_reg.state_dict())
+        self.n_std=self.n_reg.n_std
+        self.n_mean=self.n_reg.n_mean
+
         super().__init__()
 
     def setup(self, stage ):
@@ -150,7 +173,7 @@ class PointCloudDataloader(pl.LightningDataModule):
         del self.scaler.transfs[1].steps[0]
         self.mins=torch.ones(4).unsqueeze(0)
         self.maxs=torch.ones(4).unsqueeze(0)
-        n=[]
+        self.n_test=self.sample_n(torch.tensor(self.test_E).reshape(-1))
 
         self.train_iterator = BatchIterator(
                             self.data,
@@ -168,15 +191,47 @@ class PointCloudDataloader(pl.LightningDataModule):
                             )
         self.test_iterator = BatchIterator(
                             self.test_data,
-                            batch_size = self.batch_size*10,
-                                max_tokens_per_batch=self.max_tokens,
+                            batch_size = self.batch_size,
+                                max_tokens_per_batch=self.max_tokens//2,
                                 drop_last=False,
                                 shuffle=False
                                 )
 
         self.train_dl = DataLoader(CustomDataset(self.data,self.E), batch_sampler=self.train_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=16)
         self.val_dl = DataLoader(CustomDataset(self.val_data,self.val_E), batch_sampler=self.val_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=16)
-        self.test_dl = DataLoader(CustomDataset(self.test_data,self.test_E), batch_sampler=self.test_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=40)
+        self.test_dl = DataLoader(CustomDataset(self.test_data,self.test_E,self.n_test), batch_sampler=self.test_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=40)
+
+    def trafo(self,x,y):
+        y=(y+torch.rand_like(y))
+        E=(x+10).exp()
+        y=(y/E**(1/2))#.log()
+        self.n_mean,self.n_std=y.mean(),y.std()
+        y=(y-self.n_mean)/self.n_std
+        return x,y
+    def inv_trafo(self,x,y,n_mean,n_std):
+        y=y*n_std+n_mean
+        E=(x+10).exp()
+        y=y*E**(1/2)
+        y=y.floor()
+        return E,y
+
+    def sample_n(self,cond):
+        '''This is a helper function that samples the number of hits from the conditional distribution p(n|E). It uses the results from a 5th order polynomial regression to remove outliers the flow samples'''
+        with torch.no_grad():
+
+            n_pred = self.n_reg(cond.reshape(-1,1).log()-10)
+            _,n_pred=self.inv_trafo(cond.reshape(-1).log()-10,n_pred.reshape(-1),self.n_mean,self.n_std)
+            print(n_pred.sum())
+            # n = n_flow(cond.reshape(-1,1).log()-10)
+            # n=(n*n_flow.n_std+n_flow.n_mean).exp()
+            # n_pred=(n_pred*n_flow.n_std+n_flow.n_mean).exp()
+            # residual= ((n - n_pred)).abs()
+            # outliers= residual/n_pred.sqrt()>30
+            # n[outliers]=n_pred[outliers]
+            # residuals=torch.abs(n-n_pred)
+            # outliers=residuals/n_pred.sqrt()>5
+            # n[outliers]=n_pred[outliers]
+            return n_pred
 
     def train_dataloader(self):
         return self.train_dl# DataLoader(self.data, batch_size=10, shuffle=False, num_workers=1, drop_last=False,collate_fn=point_cloud_collate_fn)

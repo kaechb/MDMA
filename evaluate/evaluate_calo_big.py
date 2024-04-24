@@ -160,12 +160,15 @@ def make_plots(model_name, disco=False,groups={},raw=False):
     data_module = PointCloudDataloader(**config)
     data_module.setup("validation")
     config = torch.load(ckpt)["hyper_parameters"]
-    model = MDMA.load_from_checkpoint(ckpt, raw=raw) if config["model"]!="FM" else FM.load_from_checkpoint(ckpt,raw=raw)
+    model = MDMA.load_from_checkpoint(ckpt, raw=raw,sample_n=False) if config["model"]!="FM" else FM.load_from_checkpoint(ckpt,raw=raw,sample_n=False)
     model.eval_metrics=False
 
     setup_model_with_data(model, data_module, config)
 
     mins,maxs,n,min_response,max_response=calculate_data_bounds(data_module.val_dataloader(), model.n_dim)
+    data_module.n_test=data_module.n_test.clamp(torch.cat(n).min(),torch.cat(n).max())
+
+
 
     # n_max=n.max()
     # n=n.float().cpu()

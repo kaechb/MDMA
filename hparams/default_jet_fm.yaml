@@ -1,6 +1,6 @@
 ---
 avg_n: 70
-batch_size: 1024
+batch_size: 1536
 bins:
   - 100
   - 100
@@ -8,26 +8,27 @@ bins:
   - 100
 boxcox: false
 cond_dim: 1
+continue: true
 ckpt: ""
 dataset: jet
 decay: 0.999
 dropout: 0
 ema: false
 ema_start: 1000
-frequencies: 16
-exact: false
+frequencies: 8
+exact: true
 glu: false
-hidden_dim: 256
-latent: 128
-layers: 6
+hidden_dim: 512
+latent: 16
+layers: 10
 lr: 0.001
 max: true
-max_epochs: 2000
+max_epochs: 1000
 model: FM
 n_dim: 3
 n_part: 150
 name: jet
-num_heads: 8
+num_heads: 16
 opt: AdamW
 parton: t
 sampler: false

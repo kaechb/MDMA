@@ -50,12 +50,13 @@ import seaborn as sns
 import numpy as np
 from my_cmaps import cmap
 from scipy.stats import boxcox
-def create_mask(n, size=30):
+def create_mask(n, size=None):
     # Ensure n is a 1D tensor
     n = n.flatten()
-
+    if size is None:
+        size = n.max().int().item()
     # Create a range tensor [0, 1, 2, ..., size-1]
-    range_tensor = torch.arange(size).unsqueeze(0)
+    range_tensor = torch.arange(size).unsqueeze(0).to(n.device)
 
     # Compare range_tensor with n to create the mask
     mask = range_tensor >= n.unsqueeze(1)
@@ -144,7 +145,7 @@ class plotting_thesis():
         FONTSIZE=20
         # Plot variables and their names
         variables = [r"E",r"z",r"alpha",r"R"]
-        names = [r"$E$",r"$z$",r"$\alpha$",r"$R$"]
+        names = [r"$E$ [MeV]",r"$z$",r"$\alpha$",r"$R$"]
         ticks=[[0,2000,4000,6000],[0,10,20,30,40],[0,5,10,15],[0,2,4,6,8]] if not self.big else [[0,2000,4000,6000],[0,10,20,30,40],[0,10,20,30,40],[0,4,8,12,16]]
         if weighted:
             FONTSIZE=FONTSIZE+3
@@ -261,7 +262,7 @@ class plotting_thesis():
         fig.savefig(f"plots/calo/response_{model_name}.pdf",format="pdf")
         fig.show()
 
-    def plot_calo_multiple(self, h_real, h_fake, weighted=False, leg=-1, model_name="",legend_name="",group_name="",groups={},raw=False):
+    def plot_calo_multiple(self, h_real, h_fake, weighted=False, leg=-1, model_name="",legend_name="",group_name="",groups={},raw=False,sample_n=False):
         if legend_name=="":
             legend_name="Generated"
 
@@ -269,7 +270,7 @@ class plotting_thesis():
         FONTSIZE=20
         # Plot variables and their names
         variables = [r"E",r"z",r"alpha",r"R"]
-        names = [r"$E$",r"$z$",r"$\alpha$",r"$R$"]
+        names = [r"$E$ [MeV]",r"$z$",r"$\alpha$",r"$R$"]
         ticks=[[0,2000,4000,6000],[0,10,20,30,40],[0,5,10,15],[0,2,4,6,8]] if not self.big else [[0,2000,4000,6000],[0,10,20,30,40],[0,10,20,30,40],[0,4,8,12,16]]
         if weighted:
             variables=variables[1:]
@@ -375,7 +376,7 @@ class plotting_thesis():
         if self.big:
             weighted+="_big"
         weighted+="_raw" if raw else ""
-
+        weighted+="_sample_n" if sample_n else ""
         path="plots/calo/"
 
 
@@ -388,7 +389,7 @@ class plotting_thesis():
 
         return fig
 
-    def plot_response_multiple(self, h_real, h_fake, weighted=False, leg=-1, model_name="",legend_name="",group_name="",groups={},raw=False):
+    def plot_response_multiple(self, h_real, h_fake, weighted=False, leg=-1, model_name="",legend_name="",group_name="",groups={},raw=False,sample_n=False):
         if legend_name=="":
             legend_name="Generated"
 
@@ -473,6 +474,7 @@ class plotting_thesis():
         fig.tight_layout(pad=0.3)
         path="plots/calo/"
         path+="raw_" if raw else ""
+        path+="sample_n" if sample_n else ""
         os.makedirs(path, exist_ok=True)
         if not self.big:
             fig.savefig(path+f"response.pdf", format="pdf")
@@ -1214,3 +1216,36 @@ class BoxCoxTransformer(nn.Module):
         x_adj = (y * self.lambda_param) + 1
         x = torch.pow(x_adj, 1 / self.lambda_param) - self.epsilon
         return x
+
+class Nflow(torch.nn.Module):
+    def __init__(self,n_mean=0,n_std=1):
+        super(Nflow,self).__init__()
+        bins=5
+        self.flow= zuko.flows.NICE(
+            features=1,
+            context=1,
+            transforms=3,
+            univariate=zuko.transforms.MonotonicRQSTransform,
+            shapes=[(bins,), (bins,), (bins - 1,)],
+            hidden_features=[128, 128,128,128]
+)
+        self.n_mean=torch.nn.Parameter(torch.tensor(n_mean),requires_grad=False)
+        self.n_std=torch.nn.Parameter(torch.tensor(n_std),requires_grad=False)
+    def forward(self,x):
+        return self.flow(x).sample()
+
+class PowerLawModel(torch.nn.Module):
+    def __init__(self,coeffs,n_mean=0.,n_std=1.):
+        super(PowerLawModel, self).__init__()
+        self.a = torch.nn.Parameter(torch.tensor(coeffs[0]),requires_grad=True)
+        self.b = torch.nn.Parameter(torch.tensor(coeffs[1]),requires_grad=True)
+        self.c = torch.nn.Parameter(torch.tensor(coeffs[2]),requires_grad=True)
+        self.d = torch.nn.Parameter(torch.tensor(coeffs[3]),requires_grad=True)
+        self.e = torch.nn.Parameter(torch.tensor(coeffs[4]),requires_grad=True)
+        self.f = torch.nn.Parameter(torch.tensor(coeffs[5]),requires_grad=True)
+
+        self.n_std=torch.nn.Parameter(torch.tensor(n_std),requires_grad=False)
+        self.n_mean=torch.nn.Parameter(torch.tensor(n_mean),requires_grad=False)
+    # def forward(self, x):
+    def forward(self, x):
+            return (self.a*x**5 +self.b * x**4 + self.c * x**3 + self.d * x**2 + self.e * x**1 + self.f)

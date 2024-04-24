@@ -88,6 +88,7 @@ class MDMA(pl.LightningModule):
         """needed for lightning training to work, it just sets the dataloader for training and validation"""
         self.data_module = data_module
 
+
     def transform(self,x):
         x=(x**self.power_lambda-1)/self.power_lambda
         return (x-self.mean)/self.scale
@@ -172,8 +173,11 @@ class MDMA(pl.LightningModule):
         return [opt_d, opt_g], [sched_d, sched_g]
 
     def schedulers(self, opt_d, opt_g):
-        sched_d = CosineWarmupScheduler(opt_d, 2000, 3000 * 1000)
-        sched_g = CosineWarmupScheduler(opt_g, 2000, 3000 * 1000)
+
+        sched_g= LinearWarmupCosineAnnealingLR(opt_g, warmup_epochs=self.trainer.max_epochs*self.hparams.num_batches//10,max_epochs=self.trainer.max_epochs*self.hparams.num_batches)
+        print("max epochs",self.trainer.max_epochs,"num_steps",self.trainer.max_epochs*self.hparams.num_batches)
+        sched_d= LinearWarmupCosineAnnealingLR(opt_d, warmup_epochs=self.trainer.max_epochs*self.hparams.num_batches//10,max_epochs=self.trainer.max_epochs*self.hparams.num_batches)
+        print("max epochs",self.trainer.max_epochs,"num_steps",self.trainer.max_epochs*self.hparams.num_batches)
         # sched_d = LinearWarmupCosineAnnealingLR(opt_d, self.hparams.num_batches*50, self.hparams.num_batches*self.hparams.max_epochs)
         # sched_g = LinearWarmupCosineAnnealingLR(opt_g, self.hparams.num_batches*50, self.hparams.num_batches*self.hparams.max_epochs)
         return sched_d, sched_g
@@ -407,25 +411,36 @@ class MDMA(pl.LightningModule):
             if batch[0].shape[1]>0:
 
                 self._log_dict = {}
-                batch, mask, cond = batch[0], batch[1], batch[2]
+                if self.hparams.dataset=="calo":
+                    batch, mask, cond, n_sample = batch[0], batch[1], batch[2], batch[3]
+                    n_sample=torch.tensor(n_sample)
+
+                else:
+                    batch, mask, cond= batch[0], batch[1], batch[2]
 
 
                 batch[mask]=0
                 if self.hparams.dataset=="jet":
                     n,_=sample_kde(len(batch)*10,self.n_kde,self.m_kde)
-                    mask=create_mask(n,size=self.hparams.n_part).cuda()
+                    sampled_mask=create_mask(n,size=self.hparams.n_part).cuda()
 
-                    mask=mask[:len(batch)].bool()
-                    cond=(~mask).sum(1).float().reshape(-1,1,1)/self.data_module.n_mean
+                    sampled_mask=sampled_mask[:len(batch)].bool()
+                    cond=(~sampled_mask).sum(1).float().reshape(-1,1,1)/self.data_module.n_mean
+
                 # mask=mask[:len(batch)]
-
+                else:
+                    if self.hparams.sample_n:
+                        sampled_mask=create_mask(n_sample).cuda()
+                    else:
+                        sampled_mask=mask.clone()
+                    sampled_mask=sampled_mask[:len(batch)].bool()
                 self.w1ps = []
                 start=time.time()
-                fake,mf = self.sampleandscale(batch=batch, mask=mask, cond=cond, scale=True)
+                fake,mf = self.sampleandscale(batch=batch, mask=sampled_mask, cond=cond, scale=True)
 
                 self.times.append((time.time()-start)/len(batch))
                 batch=batch.reshape(-1,batch.shape[1],self.n_dim)
-                fake=fake.reshape(-1,batch.shape[1],self.n_dim)
+                fake=fake.reshape(-1,sampled_mask.shape[1],self.n_dim)
                 self.batch.append(batch.cpu())
                 self.fake.append(fake.cpu())
                 self.masks.append(mask.cpu())
@@ -440,9 +455,9 @@ class MDMA(pl.LightningModule):
                     response_fake=torch.clamp(response_fake,0,1.99).cpu().numpy().reshape(-1)
                     for i in range(self.n_dim):
                         self.hists_real[i].fill(batch[~mask.squeeze(-1)][:, i].cpu().long().numpy())
-                        self.hists_fake[i].fill(fake[~mask.squeeze(-1)][:, i].cpu().long().numpy())
+                        self.hists_fake[i].fill(fake[~sampled_mask.squeeze(-1)][:, i].cpu().long().numpy())
                         if i>=1:
                             self.weighted_hists_real[i-1].fill(batch[~mask.squeeze(-1)][:, i].cpu().long().numpy(),weight=batch[~mask.squeeze(-1)][:, 0].cpu().numpy())
-                            self.weighted_hists_fake[i-1].fill(fake[~mask.squeeze(-1)][:, i].cpu().long().numpy(),weight=fake[~mask.squeeze(-1)][:, 0].cpu().numpy())
+                            self.weighted_hists_fake[i-1].fill(fake[~sampled_mask.squeeze(-1)][:, i].cpu().long().numpy(),weight=fake[~sampled_mask.squeeze(-1)][:, 0].cpu().numpy())
                     self.response_real.fill(response_real)
                     self.response_fake.fill(response_fake)
