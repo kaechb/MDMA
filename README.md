@@ -1,5 +1,5 @@
 
-```markdown
+
 ### README for Thesis Repository: Model Training
 
 #### Overview
@@ -66,5 +66,4 @@ Several PyTorch Lightning callbacks are utilized to enhance training:
 
 ---
 
-```
 
