@@ -3,7 +3,7 @@ import os
 import time
 import traceback
 from collections import OrderedDict
-import time
+from copy import deepcopy
 from typing import Any, Mapping
 
 import hist
@@ -17,7 +17,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from hist import Hist
-from jetnet.evaluation import fpd, get_fpd_kpd_jet_features, kpd, w1m
+#from jetnet.evaluation import fpd, get_fpd_kpd_jet_features, kpd, w1m
 from nflows.flows import base
 from nflows.flows.base import Flow
 from nflows.nn import nets
@@ -25,38 +25,48 @@ from nflows.transforms.autoregressive import *
 from nflows.transforms.base import CompositeTransform
 from nflows.transforms.coupling import *
 from nflows.utils.torchutils import create_random_binary_mask
+from pl_bolts.optimizers.lr_scheduler import LinearWarmupCosineAnnealingLR
 from pytorch_lightning.loggers import TensorBoardLogger
 #from src.models.coimport torchdiffeqmponents.diffusion import VPDiffusionSchedule
 from torch import Tensor, nn
+from torch.cuda import amp
 from torch.distributions import Normal
 from torch.nn import functional as F
 from torch.nn import functional as FF
 from torch.optim.lr_scheduler import (ExponentialLR, OneCycleLR,
                                       ReduceLROnPlateau)
 from torchcfm.conditional_flow_matching import (
-    ConditionalFlowMatcher, ExactOptimalTransportConditionalFlowMatcher, TargetConditionalFlowMatcher,
-    SchrodingerBridgeConditionalFlowMatcher)
+    ConditionalFlowMatcher, ExactOptimalTransportConditionalFlowMatcher,
+    SchrodingerBridgeConditionalFlowMatcher, TargetConditionalFlowMatcher)
 from torchdyn.core import NeuralODE
-from pl_bolts.optimizers.lr_scheduler import LinearWarmupCosineAnnealingLR
 
-from utils.helpers import get_hists, mass, plotting_point_cloud, sample_kde, create_mask
-from copy import deepcopy
-from torch.cuda import amp
+from utils.helpers import (create_mask, get_hists, mass, plotting_point_cloud,
+                           sample_kde)
 
 
 class torch_wrapper(torch.nn.Module):
     """Wraps model to torchdyn compatible format."""
 
-    def __init__(self, model,mask,cond,use_t=True):
+    def __init__(self, model,mask,cond,use_t=True,simon=False,pos=None):
         super().__init__()
         self.model = model
         self.use_t = use_t
         self.mask = mask
         self.cond = cond
-
+        self.simon=simon
+        if simon:
+            self.pos=pos
     def forward(self, t, x, *args, **kwargs):
         if self.use_t:
-            return self.model( t.repeat(x.shape[0])[:, None],x,mask=self.mask,cond=self.cond)
+            if self.simon:
+
+                x=self.model( t.repeat(x.shape[0])[:, None],x.clone(),mask=self.mask,cond=self.cond,pos=self.pos)
+
+
+            else:
+                x=self.model( t.repeat(x.shape[0])[:, None],x,mask=self.mask,cond=self.cond)
+
+            return x
         else:
             print("not using time, you sure?")
             return self.model(x=x)
@@ -67,7 +77,7 @@ class torch_wrapper(torch.nn.Module):
 class FM(pl.LightningModule):
 
 
-    def __init__(self,raw=False,**hparams):
+    def __init__(self,raw=False,simon=False,**hparams):
 
         '''This initializes the model and its hyperparameters'''
         super().__init__()
@@ -146,8 +156,12 @@ class FM(pl.LightningModule):
         with torch.no_grad():
             shape=list(batch.shape)
             shape[1]=mask.shape[1]
-            x0 = torch.randn(shape).to(self.device)
-            wrapped_cnf = torch_wrapper(model=self.net, mask=mask, cond=cond)
+            if not self.hparams.simon:
+                x0 = torch.randn(shape).to(self.device)
+            else:
+                x0=batch.clone()
+                x0=self.shuffle_energies(x0,mask)
+            wrapped_cnf = torch_wrapper(model=self.net, mask=mask, cond=cond,simon=self.hparams.simon,pos=batch[:,:,1:].clone() if self.hparams.simon else None)
             node=NeuralODE(lambda t,x,args: wrapped_cnf(t,x,mask,cond), solver="midpoint")
 
             samples = node.trajectory(x0, t_span=torch.linspace(0, t_stop, num_samples).to(self.device),)
@@ -159,7 +173,6 @@ class FM(pl.LightningModule):
             and reverses the standard scaling that is done in the preprocessing. This allows to calculate the mass
             on the generative sample and to compare to the simulated one, we need to inverse the scaling before calculating the mass
             because calculating the mass is a non linear transformation and does not commute with the mass calculation'''
-        print(self.device)
         fake=self.sample(batch,mask,cond,num_samples=num_samples)
         fake_scaled=fake.clone()
 
@@ -178,6 +191,7 @@ class FM(pl.LightningModule):
 
         else:
             fake= self.scaler.inverse_transform(fake)
+
             if not self.hparams.raw:
                 fake[:,:,2]=(fake[:,:,2]+torch.randint(0,self.hparams.bins[2], size=(fake.shape[0],1),device=fake.device).expand(-1,mask.shape[1]))%self.hparams.bins[2]
             fake[mask]=0
@@ -202,7 +216,7 @@ class FM(pl.LightningModule):
     def configure_optimizers(self):
 
         opt_g = torch.optim.AdamW(self.net.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.weightdecay)
-        lr_scheduler= LinearWarmupCosineAnnealingLR(opt_g, warmup_epochs=self.trainer.max_epochs*self.hparams.num_batches//10,max_epochs=self.trainer.max_epochs*self.hparams.num_batches)
+        lr_scheduler= LinearWarmupCosineAnnealingLR(opt_g, warmup_epochs=self.hparams.max_epochs*self.hparams.num_batches//10,max_epochs=self.hparams.max_epochs*self.hparams.num_batches)
         print("max epochs",self.trainer.max_epochs,"num_steps",self.trainer.max_epochs*self.hparams.num_batches)
         #return {"optimizer":opt_g,"lr_scheduler":lr_scheduler}#({'optimizer': opt_g, 'frequency': 1, 'scheduler':None if not self.lr_schedule else scheduler})
         return  (
@@ -217,7 +231,33 @@ class FM(pl.LightningModule):
             }
         ]
         )
+    def shuffle_energies(self, X1, mask,complicated=False):
+        with torch.no_grad():
+            B, N, D = X1.shape
+            shuffled_X1 = X1.clone()
 
+            # Flatten the tensor to simplify processing
+            # flat_X1 = shuffled_X1.view(-1, D)  # Reshape to (B*N, D)
+
+            # # Generate global indices to identify each element uniquely across batches
+            # global_indices = torch.arange(B * N,device=X1.device)
+
+            # # Compute the shufflable global indices (where mask is False)
+            # shufflable_global_indices = global_indices[~mask.view(-1)]
+
+            # # Shuffle these indices
+            # shuffled_global_indices = shufflable_global_indices[torch.randperm(shufflable_global_indices.shape[0],device=X1.device)]
+
+            # # Perform the shuffle on the first component
+            # flat_X1[shufflable_global_indices, 0] = flat_X1[shuffled_global_indices, 0]
+
+            # Reshape back to the original shape
+            X0= torch.randn(X1.shape,device=X1.device)
+            X0[~mask][:,1:]=X1[~mask][:,1:]
+            X0[mask]=0
+        # ]
+        # shuffled_X1 = flat_X1.view(B, N, D)
+        return X0
 
     def training_step(self, batch):
         """training loop of the model, here all the data is passed forward to a gaussian
@@ -225,12 +265,20 @@ class FM(pl.LightningModule):
 
         batch,mask, cond= batch[0],batch[1], batch[2]
         x0,x1 =torch.randn_like(batch), batch
+        # if self.hparams.simon:
+        #     B=batch.shape[0]
+        #     N=batch.shape[1]
+        #     x0=x1.clone()
+        #     x0=self.shuffle_energies(x0,mask)
+
+
         t, xt, ut = self.FM.sample_location_and_conditional_flow(x0,x1)
-        vt = self.net(t, xt,mask=mask,cond=cond).cuda()
+        vt = self.net(t, xt,mask=mask,cond=cond,pos=x1[:,:,1:].clone()).cuda()
         # zeroing errors from padded particles
         vt[mask]=0
         ut[mask]=0
-        loss = torch.mean((vt - ut) ** 2)
+
+        loss = torch.mean((vt - ut) ** 2)#+vt.sum(1).abs().mean()
         self.log("train/pointsperbatch", (~mask).int().sum(), on_step=True)
         self.log("train/total", mask.shape[1]*mask.shape[0], on_step=True)
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=False)
@@ -250,8 +298,12 @@ class FM(pl.LightningModule):
                 batch[mask]=0
                 self.w1ps = []
                 start=time.time()
-                fake,_ = self.sampleandscale(batch=batch, mask=mask,cond=cond,num_samples=200)
+                fake,_ = self.sampleandscale(batch=batch, mask=mask,cond=cond,num_samples=100)
                 self.times.append(time.time()-start)
+                if self.hparams.simon:
+                    batch=self.scaler.inverse_transform(batch)
+                    batch[mask]=0
+
                 if self.hparams.dataset=="jet":
                     batch=batch.reshape(-1,batch.shape[1],self.n_dim)
                     fake=fake.reshape(-1,batch.shape[1],self.n_dim)
@@ -407,11 +459,17 @@ class FM(pl.LightningModule):
             if batch[0].shape[1]>0:
                 self._log_dict = {}
                 if self.hparams.dataset=="calo":
-                    batch, mask, cond, n_sample = batch[0], batch[1], batch[2], batch[3]
-                    n_sample=torch.tensor(n_sample)
+                    if len(batch)==4:
+                        n_sample= batch[3]
+                        n_sample=torch.tensor(n_sample)
+
+
+                    batch, mask, cond = batch[0], batch[1], batch[2]
 
                 else:
                     batch, mask, cond= batch[0], batch[1], batch[2]
+                print(batch.shape)
+
 
                 batch[mask]=0
                 if self.hparams.dataset=="jet":
@@ -429,9 +487,14 @@ class FM(pl.LightningModule):
 
                 self.w1ps = []
                 start=time.time()
-                fake,fake_scaled=self.sampleandscale(batch=batch, mask=sampled_mask,cond=cond,num_samples=200)
+                fake,fake_scaled=self.sampleandscale(batch=batch, mask=sampled_mask,cond=cond,num_samples=200
+                )
+                if self.hparams.simon:
+                    batch=self.scaler.inverse_transform(batch)
+                    batch[mask]=0
                 self.times.append((time.time()-start)/len(fake))
                 if self.hparams.dataset=="calo":
+
                     maxs=torch.tensor([6499, self.hparams.bins[1]-1,self.hparams.bins[2]-1,self.hparams.bins[3]-1],device=self.device)
                     fake=torch.clamp(fake,torch.zeros_like(fake), maxs)
                     response_real=(batch[:,:,0].sum(1).reshape(-1)/ (cond[:,0,0] + 10).exp())
@@ -454,3 +517,4 @@ class FM(pl.LightningModule):
                 self.fake.append(fake.cpu())
                 self.masks.append(mask.cpu())
                 self.conds.append(cond.cpu())
+

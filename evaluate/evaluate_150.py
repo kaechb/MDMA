@@ -236,8 +236,8 @@ def calc_metrics(true,train,time_dict,param_dict,models):
         kpd_ = kpd(real_fpd, fake_fpd, )
         metrics = {"name": ["t"], "model": [model_name], "w1m": [w1m_score], "w1p": [w1p_score],  "w1efp": [w1efp_score], "kpd": [kpd_], "fpd": [fpd_],"time":[time_dict[model_name]],"parameters":[ param_dict[model_name]]}#"w1efp": [w1efp_], "kpd": [kpd_], "fpd": [fpd_]
         # Prepare histograms
-        mins=torch.cat((mins,m_f.min().unsqueeze(0)))
-        maxs=torch.cat((maxs,m_f.max().unsqueeze(0)))
+        mins=torch.cat((mins,m_t.min().unsqueeze(0)))
+        maxs=torch.cat((maxs,m_t.max().unsqueeze(0)))
         mins[0]=-1
         maxs[0]=1
         hists=get_hists([50,50,50,50],mins-0.01,maxs+0.01,calo=False)
@@ -392,9 +392,9 @@ def print_table(results):
     print(tex)
 import json
 #,"mdma_fm_jet","EPiC-FM","IN","EPiC-GAN"
-boxcox=False
+boxcox=True
 if not boxcox:
-    models=["mdma_jet","mdma_fm_jet_std","EPiC-FM","IN","EPiC-GAN"]
+    models=["mdma_jet_std","mdma_fm_jet_std","EPiC-FM","IN","EPiC-GAN"]
 else:
     models=["mdma_jet","mdma_fm_jet","EPiC-FM","IN","EPiC-GAN"]
 print("boxcox:",boxcox)

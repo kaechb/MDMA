@@ -190,7 +190,7 @@ def plot(name,fake,true,boxcox,groups):
     plot=plotting_thesis()
     try:
         save_name=name if not boxcox else "boxcox/"+name
-
+        plot.plot_ratio(hists["hists_real"],hists["hists_fake"],weighted=False,leg=2,model_name=name,legend_name=replace_dict[name])
         if name.find("t_tf")!=-1 or name.find("t_tnf")!=-1:
 
             groups["GANs"].append(plot.plot_ratio_multiple(hists["hists_real"],hists["hists_fake"],weighted=False,leg=2,model_name=save_name,legend_name=replace_dict[name],group_name="GANs",groups=groups,boxcox=boxcox))
@@ -259,7 +259,7 @@ def jetnet_eval(model_dict,data_module,time_dict,param_dict,boxcox,debug=False):
 torch.set_float32_matmul_precision('medium' )
 
 
-boxcox=False
+boxcox=True
 model_dict={}
 time_dict={}
 param_dict={}
@@ -272,7 +272,7 @@ if not boxcox:
     jetnet30=["t_ipf_std","t_pf_std","t_apf_std","t_tf_std","t_tnf_std","t_nf_std","t_cnf_std","t_ccnf_std",]#,
 else:
     jetnet30=["t_ipf","t_pf","t_apf","t_tf","t_tnf","t_nf","t_cnf","t_ccnf",]#,
-load=False
+load=True
 
 for model_name in jetnet30:
 

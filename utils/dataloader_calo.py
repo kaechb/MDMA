@@ -36,7 +36,7 @@ class BatchIterator:
         length_groups = {}
         for idx in range(len(self.data_source)):
             sample_len = len(self.data_source[idx])
-            group_key = self._get_group_key(sample_len, 200)  # Grouping by 200 tokens range
+            group_key = self._get_group_key(sample_len, 50)  # Grouping by 200 tokens range
             length_groups.setdefault(group_key, []).append(idx)
 
         # Shuffle within each length group
@@ -47,17 +47,22 @@ class BatchIterator:
         batches = []
         batch = []
         batch_tokens = 0
+        max_len=0
         for group_key in sorted(length_groups.keys()):
             for idx in length_groups[group_key]:
                 sample_len = len(self.data_source[idx])
-                if batch_tokens + sample_len > self.max_tokens_per_batch or len(batch) >= self.batch_size:
+                if sample_len>max_len:
+                    max_len=sample_len
+                if max_len*len(batch) > self.max_tokens_per_batch or len(batch) >= self.batch_size:
                     batches.append(batch)
                     batch = []
                     batch_tokens = 0
+                    max_len=0
                 batch.append(idx)
-                batch_tokens += sample_len
+
         if not self.drop_last and len(batch) > 0:
             batches.append(batch)
+
 
         if self.shuffle:
             np.random.shuffle(batches)
@@ -89,9 +94,11 @@ class CustomDataset(Dataset):
         self.E = E
         self.n_test=n_test
 
+
     def __getitem__(self, index):
         if self.n_test is not None:
             return self.data[index], self.E[index],self.n_test[index]
+
         return self.data[index], self.E[index]
 
     def __len__(self):
@@ -104,6 +111,7 @@ def pad_collate_fn(batch,avg_n):
     if len(batch[0])==2:
         batch,E=zip(*batch)
         n_test=None
+
     else:
         batch,E,n_test=zip(*batch)
     max_len = max(len(sample) for sample in batch)
@@ -122,7 +130,7 @@ class PointCloudDataloader(pl.LightningDataModule):
     one thing to note is the custom standard scaler that works on tensors
    """
 
-    def __init__(self,name,batch_size,max=False,scaler_path="./",middle=True,max_tokens=500_000,**kwargs):
+    def __init__(self,name,batch_size,max=False,scaler_path="./",middle=True,max_tokens=500_000,simon=False,**kwargs):
         self.name=name
         self.batch_size=batch_size
         self.max=max
@@ -135,16 +143,17 @@ class PointCloudDataloader(pl.LightningDataModule):
         self.avg_n=1587.93468#these are the average number of particles per cloud, used to scale the condition
         self.n_kde=None
         self.m_kde=None
+        self.simon=simon
         bins=5
         # self.n_flow = Nflow()
         # self.n_flow.load_state_dict(torch.load("ckpts/n_flow_{}.pt".format("middle" if middle else "big")))
 
         # self.n_flow.load_state_dict(torch.load("ckpts/n_flow_{}.pt".format("middle" if middle else "big")))
-        self.n_reg = PowerLawModel(coeffs=torch.zeros(6))
-        self.n_reg.load_state_dict(torch.load("ckpts/n_reg_{}.pt".format("middle" if middle else "big")))
-        print(self.n_reg.state_dict())
-        self.n_std=self.n_reg.n_std
-        self.n_mean=self.n_reg.n_mean
+        # self.n_reg = PowerLawModel(coeffs=torch.zeros(6))
+        # self.n_reg.load_state_dict(torch.load("ckpts/n_reg_{}.pt".format("middle" if middle else "big")))
+        # print(self.n_reg.state_dict())
+        # self.n_std=self.n_reg.n_std
+        # self.n_mean=self.n_reg.n_mean
 
         super().__init__()
 
@@ -155,13 +164,16 @@ class PointCloudDataloader(pl.LightningDataModule):
         self.E=self.data["Egen"]
         self.data=self.data["E_z_alpha_r"]
         self.val_data=torch.load(f"/beegfs/desy/user/kaechben/calochallenge/pc_test_{self.dataset}.pt")
-        self.test_E=self.val_data["Egen"]
-        self.test_data=self.val_data["E_z_alpha_r"]
+
+        if self.simon:
+            self.test_data=torch.load(f"/beegfs/desy/user/kaechben/calochallenge/pc_train_{self.dataset}_uniform_simon.pt")
+            self.test_E=self.test_data["Egen"]
+            self.test_data=self.test_data["E_z_alpha_r"]
+        else:
+            self.test_E=self.val_data["Egen"]
+            self.test_data=self.val_data["E_z_alpha_r"]
         self.val_E=self.val_data["Egen"]
         self.val_data=self.val_data["E_z_alpha_r"]
-        print(len(self.val_data))
-
-
         self.scaler = ScalerBase(
                         transfs=[PowerTransformer(method="box-cox", standardize=True),
                             Pipeline([('dequantization', DQLinear(name=self.name)),('minmax_scaler', MinMaxScaler(feature_range=(1e-5, 1-1e-5))),('logit_transformer', LogitTransformer()),("standard_scaler",StandardScaler())]),
@@ -173,7 +185,7 @@ class PointCloudDataloader(pl.LightningDataModule):
         del self.scaler.transfs[1].steps[0]
         self.mins=torch.ones(4).unsqueeze(0)
         self.maxs=torch.ones(4).unsqueeze(0)
-        self.n_test=self.sample_n(torch.tensor(self.test_E).reshape(-1))
+        #self.n_test=self.sample_n(torch.tensor(self.test_E).reshape(-1))
 
         self.train_iterator = BatchIterator(
                             self.data,
@@ -190,16 +202,16 @@ class PointCloudDataloader(pl.LightningDataModule):
                             shuffle=True
                             )
         self.test_iterator = BatchIterator(
-                            self.test_data,
+                            self.test_data ,
                             batch_size = self.batch_size,
-                                max_tokens_per_batch=self.max_tokens//2,
+                                max_tokens_per_batch=self.max_tokens//3,
                                 drop_last=False,
                                 shuffle=False
                                 )
 
         self.train_dl = DataLoader(CustomDataset(self.data,self.E), batch_sampler=self.train_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=16)
-        self.val_dl = DataLoader(CustomDataset(self.val_data,self.val_E), batch_sampler=self.val_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=16)
-        self.test_dl = DataLoader(CustomDataset(self.test_data,self.test_E,self.n_test), batch_sampler=self.test_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=40)
+        self.val_dl = DataLoader(CustomDataset(self.val_data,self.val_E), batch_sampler=self.val_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=16) if not self.simon else self.train_dl
+        self.test_dl = DataLoader(CustomDataset(self.test_data,self.test_E), batch_sampler=self.test_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=40) if not self.simon else DataLoader(CustomDataset(self.test_data,self.test_E), batch_sampler=self.test_iterator,collate_fn=lambda x: pad_collate_fn(x,self.avg_n),num_workers=40)
 
     def trafo(self,x,y):
         y=(y+torch.rand_like(y))

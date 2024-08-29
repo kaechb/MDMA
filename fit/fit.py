@@ -412,8 +412,11 @@ class MDMA(pl.LightningModule):
 
                 self._log_dict = {}
                 if self.hparams.dataset=="calo":
-                    batch, mask, cond, n_sample = batch[0], batch[1], batch[2], batch[3]
-                    n_sample=torch.tensor(n_sample)
+                    if len(batch)==4:
+                        n_sample= batch[3]
+                        n_sample=torch.tensor(n_sample)
+
+                    batch, mask, cond = batch[0], batch[1], batch[2]
 
                 else:
                     batch, mask, cond= batch[0], batch[1], batch[2]

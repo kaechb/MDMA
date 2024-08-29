@@ -341,7 +341,7 @@ class plotting_thesis():
 
             # Setting labels and styles
             ax_ratio.set_xlabel(name, fontsize=FONTSIZE)
-            ax_main.set_ylabel("Counts", fontsize=FONTSIZE)
+            ax_main.set_ylabel("Counts" if not weighted else "E [MeV]", fontsize=FONTSIZE)
             ax_ratio.set_ylabel("Ratio", fontsize=FONTSIZE)
 
             ax_ratio.set_ylim(0.5, 1.5) if variable=="E" else ax_ratio.set_ylim(0.9, 1.1)
@@ -451,7 +451,7 @@ class plotting_thesis():
         ax_main.set_xlabel("")
         ax_main.set_ylabel("Counts",fontsize=self.FONTSIZE)
         ax_ratio.set_xlabel("Response",fontsize=self.FONTSIZE)
-        ax_main.set_ylabel("Ratio",fontsize=self.FONTSIZE)
+        ax_ratio.set_ylabel("Ratio",fontsize=self.FONTSIZE)
         ax_main.set_yscale("log")
         ax_main.legend()
         ax_ratio.set_ylim(0.5, 1.5)
@@ -495,7 +495,7 @@ class plotting_thesis():
 
         # Plot variables and their names
         variables = ["eta", "phi", "pt", "m"]
-        names = [r"$\eta^{\mathrm{rel}}$", r"$\phi^{\mathrm{rel}}$", r"$p_T^{\mathrm{rel}}$", r"$m^{\mathrm{rel}}$"]
+        names = [r"$\eta^{\mathrm{rel}}$", r"$\phi^{\mathrm{rel}}$", r"$p_{\mathrm{T}}^{\mathrm{rel}}$", r"$m^{\mathrm{rel}}$"]
 
         if outer_gs==None:
             outer_gs = gridspec.GridSpec(2, 2, figure=fig,hspace=0.3,wspace=.3)
@@ -532,7 +532,9 @@ class plotting_thesis():
             # ax_main.yaxis.set_major_locator(locator)
             ax_main.patches[0].set_fill(True)
             ax_main.patches[0].set_alpha(self.alpha)
-            if k==2 or log and k!=3:
+            if k!=3:
+            #if k==2 or log and k!=3:
+                print("set log scale")
                 ax_main.set_yscale("log")
             # ax_main.patches[1].set_fc(sns.color_palette()[0])
             # ax_main.patches[0].set_fc(sns.color_palette()[1])
@@ -540,7 +542,7 @@ class plotting_thesis():
             ax_main.patches[1].set_linewidth(2)
             # ax_main.patches[0].set_lw(2)
             ax_ratio.set_xlim(ax_main.get_xlim())
-            if k==2:
+            if k==1:
                 self._adjust_legend(ax_main, leg)
 
 
@@ -569,7 +571,7 @@ class plotting_thesis():
 
         # Plot variables and their names
         variables = ["eta", "phi", "pt", "m"]
-        names = [r"$\eta^{\mathrm{rel}}$", r"$\phi^{\mathrm{rel}}$", r"$p_T^{\mathrm{rel}}$", r"$m^{\mathrm{rel}}$"]
+        names = [r"$\eta^{\mathrm{rel}}$", r"$\phi^{\mathrm{rel}}$", r"$p_{\mathrm{T}}^{\mathrm{rel}}$", r"$m^{\mathrm{rel}}$"]
 
         # Create or reuse figure and gridspec
         if groups[group_name] ==[] :
@@ -628,7 +630,7 @@ class plotting_thesis():
             ax_ratio.set_ylim(0.5, 1.5)  # Adjust as necessary
             ax_ratio.set_yticks([0.5, 1, 1.5])
             ax_main.set_xlabel("")
-            if idx==2 or log and idx!=3:
+            if idx!=3:
                 ax_main.set_yscale("log")
             if idx==2:
                 self._adjust_legend(ax_main, leg)
@@ -686,7 +688,7 @@ class plotting_thesis():
 
             cax3=sns.heatmap(correlations[2], ax=axes[2], cmap='coolwarm',cbar=False,vmin=lims[2][0],vmax=lims[2][1]
                              )
-            axes[2].set_title(r'$p_T^{\text{rel}}$',fontsize=self.FONTSIZE+10, pad=10)
+            axes[2].set_title(r'$p_{\mathrm{T}}^{\text{rel}}$',fontsize=self.FONTSIZE+10, pad=10)
             for ax in axes:
                 ax.set_xticks([1,10,20,30],)
                 ax.set_yticks([1,10,20,30])
@@ -711,7 +713,7 @@ class plotting_thesis():
         # diff=[diffs[0]-diffs[3],diffs[1]-diffs[4],diffs[2]-diffs[5]]
 
         # fig, axes = plt.subplots(1, 3, figsize=self.fig_size3)
-        # fig.suptitle(r"$\Delta$Ground Truth - Generated Data Correlations between Particles", fontsize=28, fontweight="bold")
+        # fig.suptitle(r"$\Delta$Ground Truth - Generated Data Correlations between Particles", fontsize=28,  fontweight="bold")
         # sns.heatmap(diff[0], ax=axes[0], cmap='coolwarm', cbar=False,vmin=-.1,vmax=.1)
         # axes[0].set_title(r'$\eta^{rel}$')
 
@@ -1064,7 +1066,7 @@ class plotting_point_cloud():
             plt.savefig("plots/response.pdf",format="pdf")
             plt.show()
 
-def get_hists(bins,mins,maxs,calo=False,ema=False,min_response=0,max_response=10):
+def get_hists(bins,mins,maxs,calo=False,ema=False,min_response=0,max_response=10,simon=False):
     hists={}
     hists["hists_real"] = []
     hists["hists_fake"] = []

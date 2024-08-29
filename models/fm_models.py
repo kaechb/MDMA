@@ -98,10 +98,10 @@ def timestep_embedding(timesteps, dim, max_period=10000):
 
 
 class Block(nn.Module):
-    def __init__(self, embed_dim, num_heads, hidden,cond_dim=0,frequencies=8):
+    def __init__(self, embed_dim, num_heads, hidden,cond_dim=0,frequencies=8,simon=False):
         super().__init__()
 
-        self.fc0 =  nn.Linear(embed_dim+2*frequencies, hidden)
+        self.fc0 =  nn.Linear(embed_dim+2*frequencies+3*simon, hidden)
         # self.fc0_cls = nn.Linear(embed_dim+1, hidden)
         # self.fc0_cls = nn.Linear(embed_dim+1, hidden)
         self.fc1 = nn.Linear(hidden +embed_dim, embed_dim)
@@ -123,15 +123,13 @@ class Block(nn.Module):
         self.ln = nn.LayerNorm(hidden)
         # self.t_local_cat=t_local_cat
         self.cond_dim=cond_dim
-
-    def forward(self, x, x_cls, cond, mask,t=None):
+        self.simon=simon
+    def forward(self, x, x_cls, cond, mask,t=None,pos=None):
         res = x.clone()
-
-
-        #res_cls = x_cls.clone()
-
-        x=torch.cat((self.act(x),t.expand(-1,x.shape[1],-1)),dim=-1)
-
+        x=self.act(x)
+        if self.simon:
+            x = torch.cat((x,pos),dim=-1)
+        x=torch.cat((x,t.expand(-1,x.shape[1],-1)),dim=-1)
         x_cls=torch.cat((self.act(x_cls),t[:,:1,:]),dim=-1)
 
         x = self.fc0(x)
@@ -161,6 +159,7 @@ class MDMA(nn.Module):
         avg_n: int ,
         num_heads: int ,
         cond_dim: int = 1,
+        simon: bool = False,
         **kwargs
     ):
         self.embed = CosineEncoding(
@@ -170,12 +169,13 @@ class MDMA(nn.Module):
                 frequency_scaling="exponential",
             )
         super().__init__()
-        self.embbed = nn.Linear(n_dim+2*frequencies, latent)
+        self.embbed = nn.Linear(n_dim+2*frequencies+3*simon, latent)
         self.embbed_cls=nn.Linear(latent+cond_dim ,latent)
         self.encoder = nn.ModuleList([Block(embed_dim=latent, num_heads=num_heads, hidden=hidden_dim,cond_dim=cond_dim,frequencies=frequencies) for i in range(layers)])
-        self.out = nn.Linear(latent, n_dim)
+        self.out = nn.Linear(latent, n_dim )
         self.act = nn.LeakyReLU()
         self.avg_n=avg_n
+        self.simon=simon
         # self.time_embed = nn.Sequential(
         #     nn.Linear(4, 4),
         #     nn.SiLU(),
@@ -187,7 +187,7 @@ class MDMA(nn.Module):
     def forward(self,        t: torch.Tensor = None,
         x: torch.Tensor = None,
 
-        mask: torch.Tensor = None,cond=None):
+        mask: torch.Tensor = None,cond=None,pos=None):
         mask=~mask
         timesteps = t
         while timesteps.dim() > 1:
@@ -196,7 +196,13 @@ class MDMA(nn.Module):
             timesteps = timesteps.repeat(x.shape[0])
         t = self.embed(timesteps).unsqueeze(1)
 
+        if self.simon:
+
+            x=torch.cat((x,pos),dim=-1)
+        else:
+            pos=None
         x=torch.cat((x,t.expand(-1,x.shape[1],-1)),dim=-1)
+
         x = self.act(self.embbed(x))
         x=x*mask.float().unsqueeze(-1)
         x_cls = x.sum(1).unsqueeze(1).clone() / self.avg_n
@@ -210,7 +216,7 @@ class MDMA(nn.Module):
             cond=mask.int().sum(1,keepdim=True).reshape(-1,1,1)/self.avg_n###REEMOVE THIS FOR STD CKPT
 
         for layer in self.encoder:
-            x, x_cls, w = layer(x, x_cls=x_cls, mask=mask, cond=cond, t=t)
+            x, x_cls, w = layer(x, x_cls=x_cls, mask=mask, cond=cond, t=t,pos=pos)
         x = self.out(self.act(x))
 
         return x*mask.unsqueeze(-1)

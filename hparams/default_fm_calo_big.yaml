@@ -26,7 +26,7 @@ frequencies: 8
 exact: false
 glu: true
 heads: 16
-hidden_dim: 512
+hidden_dim: 256
 lambda_gp:  0
 lambda_response: 0.
 latent: 16
@@ -34,7 +34,7 @@ layers: 16
 lr: 0.00001
 max: true
 max_epochs: 200
-max_tokens: 1600_000
+max_tokens: 800_000
 model: FM
 middle: false
 n_dim: 4

@@ -214,21 +214,28 @@ class ScalerBase:
         if not self.scalerpath.is_file() and not overwrite:
             raise ValueError("Scaler not found")
 
-    def save_scalar(self, pcs,save=False):
+    def save_scalar(self, pcs,save=False,simon=False):
         # The features need to be converted to numpy immediatly
         # otherwise the queuflow afterwards doesnt work
         if not isinstance(pcs, np.ndarray):
             pcs=pcs.numpy().astype(np.float64)
         orig_pcs=np.copy(pcs)
         self.plot_scaling(pcs)
-        pcs = np.hstack(
+        if simon: #data cant be constant for boxcox fit
+            pcs[:,:1]+=np.abs(np.random.randn(*pcs[:,:1].shape)*0.001)
+            pcs = np.hstack(
             [
-                self.transfs[0].fit_transform(pcs[:,:1]),
-                self.transfs[1].fit_transform(pcs[:,1:]),
-
-
+                self.transfs[0].transform(pcs[:,:1]),
+                self.transfs[1].transform(pcs[:,1:]),
             ]
         )
+        else:
+            pcs = np.hstack(
+                [
+                    self.transfs[0].fit_transform(pcs[:,:1]),
+                    self.transfs[1].fit_transform(pcs[:,1:]),
+                ]
+            )
         print("post scaling")
         self.plot_scaling(pcs, True)
         pcs_invert=np.hstack(
@@ -273,8 +280,6 @@ class ScalerBase:
             [
                 self.transfs[0].inverse_transform(pcs[:,:1]),
                 self.transfs[1].inverse_transform(pcs[:,1:]),
-
-
             ]
         )
         return torch.from_numpy(t_stacked.reshape(*orgshape)).to(dev).float()
@@ -292,8 +297,7 @@ class ScalerBase:
                  savename=self.data_dir+ f"{self.name}_pre.png"
             else:
                 savename= self.data_dir+f"{self.name}_id.png"
-        if post==False:
-            plt.yscale("log")
+
         fig.savefig(savename)
 
         plt.close(fig)
@@ -302,11 +306,14 @@ if __name__ == "__main__":
     middle={"train": ["dataset_2_1.hdf5"], "test": ["dataset_2_2.hdf5"]}
     outL=[]
     i=0
-    middle_dataset=False
-    linear=True
+    middle_dataset=True
+    linear=False
+    simon=True
+
     for middle_dataset in [True]:#,True
         name="middle" if middle_dataset else "big"
         name+="_uniform" if not linear else name
+        name+="_simon" if simon else name
         if middle_dataset:
             num_z = 45
             num_alpha = 16
@@ -323,7 +330,7 @@ if __name__ == "__main__":
                 outL=[]
                 data_dir = "/beegfs/desy/user/kaechben/calochallenge/"
                 for file in files[mode]:
-                    electron_file = h5py.File(data_dir + file, "r")
+                    electron_file = h5py.File(data_dir + file if not simon else "/beegfs/desy/user/schnakes/calochallenge_data/dataset_2_pyr.hdf5", "r")
                     energies = electron_file["incident_energies"][:]
                     showers = electron_file["showers"][:]
                     tempL = [shower_to_pc(e) for e in tqdm(zip(torch.tensor(showers), torch.tensor(energies)))]
@@ -339,12 +346,12 @@ if __name__ == "__main__":
                             Pipeline([('dequantization', DQLinear(name=name) if linear else DQ()),('minmax_scaler', MinMaxScaler(feature_range=(1e-5, 1-1e-5),clip=True)),('logit_transformer', LogitTransformer()),("standard_scaler",StandardScaler())]),
                         ],
                         featurenames=["E", "z", "alpha", "r"],
-                        name=name,
-                        overwrite=True,
+                        name=name.replace("_simon","").replace("_uniform",""),
+                        overwrite=False if simon else True,
                     )
 
                     arr = torch.vstack(outD["E_z_alpha_r"])
-                    arr,arr_inv=scalar.save_scalar(arr,save=True)
+                    arr,arr_inv=scalar.save_scalar(arr,save=not simon,simon=simon)
                     print("done")
                     arr=torch.from_numpy(arr).float()
                     pc_list=[]

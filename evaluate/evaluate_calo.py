@@ -208,6 +208,7 @@ def make_plots(model_name,data_module, disco=False,raw=False,groups={},sample_n=
                 default_root_dir="/gpfs/dust/maxwell/user/{}/{}".format(
                     os.environ["USER"], config["dataset"]
                 ),
+
             )
     with torch.no_grad():
         i=0
@@ -229,6 +230,28 @@ def make_plots(model_name,data_module, disco=False,raw=False,groups={},sample_n=
     plotter = plotting_thesis()
     if raw:
         model_name+="_raw"
+    if model.hparams.simon:
+        hists=get_hists(model.hparams.bins,model.scaled_mins.reshape(-1)*1.1,model.scaled_maxs.reshape(-1)*1.1,calo=model.hparams.dataset=="calo")
+        model.hists_real=hists["hists_real"]
+        model.weighted_hists_real=hists["weighted_hists_real"]
+
+        model.response_real=hists["response_real"]
+        b=[]
+        for batch,E in zip(data_module.val_data,data_module.val_E):
+            b.append(batch.reshape(-1,4).cpu())
+
+            for i in range(4):
+                model.hists_real[i].fill(batch.reshape(-1,4)[:, i].cpu().long().numpy())
+                if i>=1:
+                    model.weighted_hists_real[i-1].fill(batch.reshape(-1,4)[:, i].cpu().long().numpy(),weight=batch.reshape(-1,4)[:, 0].cpu().numpy())
+            response_real=(batch.reshape(-1,4)[:,0].sum().reshape(-1)/ E)
+            model.response_real.fill(response_real)
+    for i in range(1,4):
+        plt.figure()
+        plt.hist(torch.cat(b)[:,i].cpu().numpy(),bins=100,weights=torch.cat(b)[:,0].cpu().numpy())
+        plt.savefig("test_{}.png".format(i))
+        plt.close()
+
     groups["unweighted"].append(plotter.plot_calo_multiple(model.hists_real, model.hists_fake, weighted=False, leg=2-int(raw), model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow",groups=groups,group_name="unweighted",raw=raw,sample_n=sample_n))
 
     groups["weighted"].append(plotter.plot_calo_multiple(model.weighted_hists_real, model.weighted_hists_fake, weighted=True, leg=2-int(raw), model_name=model_name,legend_name="MDMA-GAN" if model_name.find("fm") == -1 else "MDMA-Flow",groups=groups,group_name="weighted",raw=raw,sample_n=sample_n))
@@ -269,13 +292,15 @@ torch.set_float32_matmul_precision("medium")
 import json
 import yaml
 raw=False
-sample_n=True
+sample_n=False
+simon=True
 groups={"weighted":[],"unweighted":[],"responses":[]}
-config = config = yaml.load(
+
+config = yaml.load(
         open("hparams/default_calo.yaml"), Loader=yaml.FullLoader
     )
-data_module = PointCloudDataloader(**config)
-data_module.setup("train")
+
+
 with open('params_calo.json', 'r') as json_file:
     param_dict = json.load(json_file)
 with open('times_calo.json', 'r') as json_file:
@@ -283,7 +308,17 @@ with open('times_calo.json', 'r') as json_file:
 if True:
     time_dict={}
     param_dict={}
-    for i,model_name in enumerate(["mdma_calo","mdma_calo_fm_small"]):#"mdma_fm_calo",
+    for i,model_name in enumerate(["mdma_calo_fm_simon"]):#"mdma_fm_calo",,"mdma_calo"
+        if model_name.find("fm") >-1:
+
+            config = yaml.load(
+            open("hparams/default_fm_calo.yaml"), Loader=yaml.FullLoader
+        )
+            config["max_tokens"]*=10
+
+        data_module = PointCloudDataloader(**config)
+        data_module.setup("train")
+
         model,total,params,groups=make_plots(model_name,data_module,raw=raw, groups=groups,sample_n=sample_n)
         time_dict[model_name]=total
         param_dict[model_name]=params

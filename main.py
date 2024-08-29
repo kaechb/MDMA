@@ -207,7 +207,7 @@ def train(config, logger, data_module, ckpt=False):
         logger=logger,
         gradient_clip_val=0.5 if config["model"] == "FM" else None,
         log_every_n_steps=100,
-        max_epochs=config["max_epochs"],
+        max_epochs=config["max_epochs"]+100,
         callbacks=callbacks,
         val_check_interval=(
             10000 if config["dataset"] == "calo" and config["middle"]==False  and config["model"] == "FM" else 15000
@@ -223,7 +223,7 @@ def train(config, logger, data_module, ckpt=False):
             )
         ),
         num_sanity_val_steps=1,
-        limit_val_batches=100,
+        limit_val_batches=50,
         enable_progress_bar=False,
         default_root_dir="/beegfs/desy/user/{}/{}".format(
             os.environ["USER"], config["dataset"]
