@@ -32,7 +32,7 @@ The script uses YAML files for configuration (`hparams/default_[model_name].yaml
 #### Usage
 To train a model, navigate to the directory containing the training script and execute:
 ```bash
-python train_script.py [model_name]
+python main.py [model_name]
 ```
 Replace `[model_name]` with the specific model configuration name you want to use, which corresponds to a YAML file.
 
